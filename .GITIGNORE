@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Compiled Kuda binaries (temp files)
+*.out
+*.bin
+/tmp/
+
+# OS junk
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Virtual environments
+venv/
+env/
+.env/
+
+# Test outputs
+*.tmp

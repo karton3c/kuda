@@ -15,6 +15,7 @@ class CGenerator:
         self.vars = {}
         self.functions = {}
         self.includes = set()
+        self.models = {}  # model_name -> {field_name: type}
 
     def fresh_tmp(self):
         self.tmp_count += 1
@@ -34,22 +35,58 @@ class CGenerator:
         self.includes.add('#include <stdint.h>')
 
         func_decls = []
+        model_decls = []
         main_stmts = []
         for stmt in ast.statements:
             if isinstance(stmt, FunNode):
                 func_decls.append(stmt)
+            elif isinstance(stmt, ModelNode):
+                model_decls.append(stmt)
             else:
                 main_stmts.append(stmt)
 
+        # First pass: register all models so we know their names
+        for m in model_decls:
+            self.models[m.name] = {}  # will be filled in _gen_model
+
+        # Register function return types before scanning call sites
+        self.func_return_types = {}  # func_name -> return type
+        for f in func_decls:
+            ret = self._scan_return_type(f.body)
+            self.func_return_types[f.name] = ret
+
+        # Deep pre-scan: build global variable type map from ALL assignments
+        self.func_param_types = {}
+        global_var_types = {}
+        self._deep_prescan(ast.statements, global_var_types)
+
+        # Third pass: scan call sites with enriched type info
+        self._scan_call_sites(ast.statements)
+
         runtime = self._runtime()
+
+        # Generate model structs and methods
+        model_code = []
+        for m in model_decls:
+            model_code.extend(self._gen_model(m))
 
         func_code = []
         for f in func_decls:
             func_code.extend(self._gen_function(f))
 
+        # Pre-declare all variables in main
+        pre = self._prescan_vars(main_stmts, set())
+
         self.emit('int main(int argc, char *argv[]) {')
         self.indent += 1
         self.emit('srand(time(NULL));')
+        for vname, vtyp in pre.items():
+            self.vars[vname] = vtyp
+            if vtyp == 'str':          self.emit(f'char* {vname} = NULL;')
+            elif vtyp == 'bool':       self.emit(f'int {vname} = 0;')
+            elif vtyp == 'list':       self.emit(f'KList* {vname} = NULL;')
+            elif vtyp in self.models:  self.emit(f'{vtyp}* {vname} = NULL;')
+            else:                      self.emit(f'double {vname} = 0;')
         for stmt in main_stmts:
             self._gen_stmt(stmt)
         self.emit('return 0;')
@@ -62,10 +99,98 @@ class CGenerator:
         final.append('')
         final.extend(runtime)
         final.append('')
+        final.extend(model_code)
+        final.append('')
         final.extend(func_code)
         final.append('')
         final.extend(main_code)
         return '\n'.join(final)
+
+    def _deep_prescan(self, stmts, var_types):
+        """
+        Walk ALL statements recursively and build a complete map of
+        variable_name -> type for the whole program. This runs before
+        code generation so we know types of every variable everywhere.
+        """
+        STR_FUNCS = {'input', 'str', 'caps', 'small', 'trim', 'swap', 'merge', 'read'}
+        for node in stmts:
+            if isinstance(node, AssignNode) and isinstance(node.name, str):
+                v = node.name
+                if isinstance(node.value, StringNode):
+                    var_types[v] = 'str'
+                elif isinstance(node.value, CallNode) and isinstance(node.value.func, IdentNode):
+                    fname = node.value.func.name
+                    if fname in self.models:
+                        var_types[v] = fname
+                    elif fname in self.func_return_types and self.func_return_types[fname] in self.models:
+                        var_types[v] = self.func_return_types[fname]
+                    elif fname in STR_FUNCS or self.func_return_types.get(fname) == 'str':
+                        var_types[v] = 'str'
+                    else:
+                        var_types.setdefault(v, 'double')
+                else:
+                    var_types.setdefault(v, 'double')
+                # Update self.vars so _scan_call_sites can see them
+                self.vars[v] = var_types[v]
+            if isinstance(node, FunNode):    self._deep_prescan(node.body, var_types)
+            if isinstance(node, ModelNode):
+                for s in node.body:
+                    if isinstance(s, FunNode): self._deep_prescan(s.body, var_types)
+            if isinstance(node, IfNode):
+                for _, body in node.cases: self._deep_prescan(body, var_types)
+                if node.else_body: self._deep_prescan(node.else_body, var_types)
+            if isinstance(node, RepeatNode): self._deep_prescan(node.body, var_types)
+            if isinstance(node, EachNode):   self._deep_prescan(node.body, var_types)
+            if isinstance(node, TilNode):    self._deep_prescan(node.body, var_types)
+
+    def _scan_call_sites(self, stmts):
+        """Scan all statements to find how functions are called and what types they receive."""
+        def get_arg_type(arg):
+            if isinstance(arg, IdentNode):
+                return self.vars.get(arg.name, 'double')
+            elif isinstance(arg, StringNode):
+                return 'str'
+            elif isinstance(arg, CallNode) and isinstance(arg.func, IdentNode):
+                fname = arg.func.name
+                if fname in self.models: return fname
+                return self.func_return_types.get(fname, 'double')
+            return 'double'
+
+        def register_call(node):
+            if isinstance(node, CallNode) and isinstance(node.func, IdentNode):
+                fname = node.func.name
+                arg_types = [get_arg_type(a) for a in node.args]
+                existing = self.func_param_types.get(fname, [])
+                merged = []
+                for i in range(max(len(arg_types), len(existing))):
+                    a = arg_types[i] if i < len(arg_types) else 'double'
+                    e = existing[i] if i < len(existing) else 'double'
+                    merged.append(a if (a in self.models or a == 'str') else e)
+                self.func_param_types[fname] = merged
+
+        def scan(stmts):
+            for node in stmts:
+                # Scan calls at statement level AND inside assignment RHS
+                register_call(node)
+                if isinstance(node, AssignNode):
+                    register_call(node.value)
+                if isinstance(node, OutNode):
+                    register_call(node.value)
+                if isinstance(node, GiveNode):
+                    register_call(node.value)
+
+                if isinstance(node, FunNode):    scan(node.body)
+                if isinstance(node, ModelNode):
+                    for s in node.body:
+                        if isinstance(s, FunNode): scan(s.body)
+                if isinstance(node, IfNode):
+                    for _, body in node.cases: scan(body)
+                    if node.else_body: scan(node.else_body)
+                if isinstance(node, RepeatNode): scan(node.body)
+                if isinstance(node, EachNode):   scan(node.body)
+                if isinstance(node, TilNode):    scan(node.body)
+
+        scan(stmts)
 
     def _runtime(self):
         return [
@@ -332,23 +457,342 @@ class CGenerator:
             '/* end Kuda runtime */',
         ]
 
+    def _gen_model(self, node):
+        """
+        Generate a C struct + constructor + methods for a Kuda model.
+        
+        model Hero:
+            fun init(self, name):
+                self.hp = 100
+        
+        Becomes:
+            typedef struct { double hp; char* name; ... } Hero;
+            Hero* Hero_new(...) { ... }
+            double Hero_method(Hero* self, ...) { ... }
+        """
+        name = node.name
+        
+        # First pass: find all self.x assignments to discover fields
+        fields = {}  # field_name -> type
+        for stmt in node.body:
+            if isinstance(stmt, FunNode):
+                self._scan_model_fields(stmt.body, fields)
+        
+        self.models[name] = fields
+        
+        lines = []
+        
+        # Generate struct
+        lines.append(f'/* Model: {name} */')
+        lines.append(f'typedef struct {{')
+        for fname, ftype in fields.items():
+            if ftype == 'str':    lines.append(f'    char* {fname};')
+            elif ftype == 'bool': lines.append(f'    int {fname};')
+            elif ftype == 'list': lines.append(f'    KList* {fname};')
+            else:                 lines.append(f'    double {fname};')
+        lines.append(f'}} {name};')
+        lines.append('')
+        
+        # Generate constructor (calls init)
+        init_fun = None
+        for stmt in node.body:
+            if isinstance(stmt, FunNode) and stmt.name == 'init':
+                init_fun = stmt
+                break
+        
+        if init_fun:
+            params_no_self = [p for p in init_fun.params if p != 'self']
+            # Figure out param types from init body
+            param_types = self._guess_param_types(init_fun.body, params_no_self)
+            c_params = ', '.join(f'{param_types.get(p, "double")} {p}' for p in params_no_self)
+            lines.append(f'{name}* {name}_new({c_params}) {{')
+            lines.append(f'    {name}* self = malloc(sizeof({name}));')
+            # Zero init all fields
+            for fname, ftype in fields.items():
+                if ftype == 'str':    lines.append(f'    self->{fname} = "";')
+                elif ftype == 'bool': lines.append(f'    self->{fname} = 0;')
+                elif ftype == 'list': lines.append(f'    self->{fname} = NULL;')
+                else:                 lines.append(f'    self->{fname} = 0;')
+            
+            # Generate init body
+            old_lines, old_indent, old_vars = self.lines, self.indent, dict(self.vars)
+            self.lines = []; self.indent = 1
+            self.vars = {p: param_types.get(p, 'double') for p in params_no_self}
+            self.vars['self'] = name
+            self.vars['_self_model'] = name
+            for stmt in init_fun.body:
+                self._gen_model_stmt(stmt, name)
+            lines.extend(self.lines)
+            self.lines, self.indent, self.vars = old_lines, old_indent, old_vars
+            
+            lines.append('    return self;')
+            lines.append('}')
+            lines.append('')
+        
+        # Generate methods
+        for stmt in node.body:
+            if isinstance(stmt, FunNode) and stmt.name != 'init':
+                method_lines = self._gen_model_method(stmt, name, fields)
+                lines.extend(method_lines)
+                lines.append('')
+        
+        return lines
+
+    def _scan_model_fields(self, stmts, fields):
+        """Find all self.x = ... assignments to build field list."""
+        STRING_FIELD_HINTS = {'name', 'ename', 'title', 'label', 'text', 'msg', 'description', 'type', 'kind', 'tag'}
+        for node in stmts:
+            if isinstance(node, AssignNode) and isinstance(node.name, AttrNode):
+                obj = node.name.obj
+                attr = node.name.attr
+                if isinstance(obj, IdentNode) and obj.name == 'self':
+                    if attr not in fields:
+                        if isinstance(node.value, StringNode):
+                            fields[attr] = 'str'
+                        elif isinstance(node.value, IdentNode) and node.value.name in STRING_FIELD_HINTS:
+                            fields[attr] = 'str'
+                        elif attr in STRING_FIELD_HINTS:
+                            fields[attr] = 'str'
+                        elif isinstance(node.value, BoolNode):
+                            fields[attr] = 'bool'
+                        elif isinstance(node.value, ListNode):
+                            fields[attr] = 'list'
+                        else:
+                            fields[attr] = 'double'
+            if isinstance(node, IfNode):
+                for _, body in node.cases:
+                    self._scan_model_fields(body, fields)
+                if node.else_body:
+                    self._scan_model_fields(node.else_body, fields)
+            if isinstance(node, RepeatNode): self._scan_model_fields(node.body, fields)
+            if isinstance(node, EachNode):   self._scan_model_fields(node.body, fields)
+            if isinstance(node, TilNode):    self._scan_model_fields(node.body, fields)
+
+    def _guess_param_types(self, stmts, params):
+        """Guess C types for parameters based on how they're assigned to fields."""
+        STRING_FIELD_HINTS = {'name', 'ename', 'title', 'label', 'text', 'msg', 'description', 'type', 'kind', 'tag'}
+        types = {p: 'double' for p in params}
+        # If param name itself hints at a string
+        for p in params:
+            if p in STRING_FIELD_HINTS:
+                types[p] = 'char*'
+        # Check what fields they're assigned to
+        for node in stmts:
+            if isinstance(node, AssignNode) and isinstance(node.name, AttrNode):
+                attr = node.name.attr
+                if isinstance(node.value, IdentNode) and node.value.name in params:
+                    p = node.value.name
+                    if attr in STRING_FIELD_HINTS:
+                        types[p] = 'char*'
+        return types
+
+    def _gen_model_stmt(self, node, model_name):
+        """Generate statements inside a model method, handling self.x = ..."""
+        if node is None: return
+        if isinstance(node, AssignNode):
+            if isinstance(node.name, AttrNode):
+                obj = node.name.obj
+                attr = node.name.attr
+                if isinstance(obj, IdentNode) and obj.name == 'self':
+                    val, typ = self._gen_expr(node.value)
+                    self.emit(f'    self->{attr} = {val};')
+                    return
+            self._gen_assign(node)
+        elif isinstance(node, OutNode):
+            self._gen_out(node)
+        elif isinstance(node, IfNode):
+            self._gen_if_model(node, model_name)
+        elif isinstance(node, GiveNode):
+            val, typ = self._gen_expr(node.value)
+            if typ == 'str' or typ in self.models:
+                self.emit(f'return {val};')
+            else:
+                self.emit(f'return (double)({val});')
+        else:
+            self._gen_stmt(node)
+
+    def _gen_if_model(self, node, model_name):
+        first = True
+        for cond, body in node.cases:
+            cval, _ = self._gen_expr(cond)
+            if first: self.emit(f'if ({cval}) {{'); first = False
+            else:     self.emit(f'}} else if ({cval}) {{')
+            self.indent += 1
+            for s in body: self._gen_model_stmt(s, model_name)
+            self.indent -= 1
+        if node.else_body:
+            self.emit('} else {')
+            self.indent += 1
+            for s in node.else_body: self._gen_model_stmt(s, model_name)
+            self.indent -= 1
+        self.emit('}')
+
+    def _gen_model_method(self, fun_node, model_name, fields):
+        """Generate a C function for a model method."""
+        old_lines, old_indent, old_vars = self.lines, self.indent, dict(self.vars)
+        self.lines = []; self.indent = 0
+        
+        params_no_self = [p for p in fun_node.params if p != 'self']
+        ret_type = self._scan_return_type(fun_node.body)
+        
+        c_ret = 'char*' if ret_type == 'str' else 'double'
+        params_str = f'{model_name}* self'
+        if params_no_self:
+            params_str += ', ' + ', '.join(f'double {p}' for p in params_no_self)
+        
+        self.emit(f'{c_ret} {model_name}_{fun_node.name}({params_str}) {{')
+        self.indent += 1
+        
+        # Set up vars: self fields accessible, plus params
+        self.vars = {p: 'double' for p in params_no_self}
+        self.vars['self'] = model_name
+        self.vars['_self_model'] = model_name
+        
+        # Pre-declare local variables
+        pre = self._prescan_vars(fun_node.body, set(params_no_self) | {'self'})
+        for vname, vtyp in pre.items():
+            self.vars[vname] = vtyp
+            if vtyp == 'str':    self.emit(f'char* {vname} = NULL;')
+            elif vtyp == 'bool': self.emit(f'int {vname} = 0;')
+            elif vtyp == 'list': self.emit(f'KList* {vname} = NULL;')
+            else:                self.emit(f'double {vname} = 0;')
+        
+        for stmt in fun_node.body:
+            self._gen_model_stmt(stmt, model_name)
+        
+        if ret_type == 'str':
+            self.emit('return "";')
+        else:
+            self.emit('return 0;')
+        self.indent -= 1
+        self.emit('}')
+        
+        result = self.lines
+        self.lines, self.indent, self.vars = old_lines, old_indent, old_vars
+        return result
+
+    def _prescan_vars(self, stmts, known_params):
+        """
+        Pre-scan function body to find all assigned variables and their types.
+        This lets us declare them all at the top of the C function, avoiding
+        'undeclared variable' errors when variables are assigned inside if/loops.
+        """
+        found = {}
+        def scan(stmts):
+            for node in stmts:
+                if isinstance(node, AssignNode) and isinstance(node.name, str):
+                    if node.name not in known_params and node.name not in found:
+                        if isinstance(node.value, StringNode):
+                            found[node.name] = 'str'
+                        elif isinstance(node.value, BoolNode):
+                            found[node.name] = 'bool'
+                        elif isinstance(node.value, ListNode):
+                            found[node.name] = 'list'
+                        elif isinstance(node.value, CallNode):
+                            # Detect common str-returning calls
+                            if isinstance(node.value.func, IdentNode):
+                                fname = node.value.func.name
+                                if fname in ('input', 'str', 'caps', 'small', 'trim', 'swap', 'merge', 'read', 'kuda_concat'):
+                                    found[node.name] = 'str'
+                                elif fname in self.models:
+                                    found[node.name] = fname
+                                elif fname in getattr(self, 'func_return_types', {}):
+                                    ret = self.func_return_types[fname]
+                                    found[node.name] = ret if ret != 'double' else 'double'
+                                else:
+                                    found[node.name] = 'double'
+                            else:
+                                found[node.name] = 'double'
+                        else:
+                            found[node.name] = 'double'
+                if isinstance(node, IfNode):
+                    for _, body in node.cases:
+                        scan(body)
+                    if node.else_body:
+                        scan(node.else_body)
+                if isinstance(node, RepeatNode): scan(node.body)
+                if isinstance(node, EachNode):   scan(node.body)
+                if isinstance(node, TilNode):    scan(node.body)
+        scan(stmts)
+        return found
+
     def _gen_function(self, node):
         old_lines, old_indent, old_vars = self.lines, self.indent, dict(self.vars)
         self.lines = []; self.indent = 0
         if isinstance(node, FunNode):
-            params = ', '.join(f'double {p}' for p in node.params)
-            self.emit(f'double {node.name}({params}) {{')
+            ret_type = self._scan_return_type(node.body)
+            if ret_type == 'str':
+                c_ret = 'char*'
+                c_ret_default = 'return "";'
+            elif ret_type in self.models:
+                c_ret = f'{ret_type}*'
+                c_ret_default = 'return NULL;'
+            else:
+                c_ret = 'double'
+                c_ret_default = 'return 0;'
+
+            # Use scanned param types if available
+            scanned = getattr(self, 'func_param_types', {}).get(node.name, [])
+            c_params = []
+            param_var_types = {}
+            for i, p in enumerate(node.params):
+                if i < len(scanned) and scanned[i] in self.models:
+                    c_params.append(f'{scanned[i]}* {p}')
+                    param_var_types[p] = scanned[i]
+                elif i < len(scanned) and scanned[i] == 'str':
+                    c_params.append(f'char* {p}')
+                    param_var_types[p] = 'str'
+                else:
+                    c_params.append(f'double {p}')
+                    param_var_types[p] = 'double'
+
+            self.emit(f'{c_ret} {"kuda_main" if node.name == "main" else node.name}({", ".join(c_params)}) {{')
             self.indent += 1
-            for p in node.params:
-                self.vars[p] = 'double'
+            for p, pt in param_var_types.items():
+                self.vars[p] = pt
+            pre = self._prescan_vars(node.body, set(node.params))
+            for vname, vtyp in pre.items():
+                self.vars[vname] = vtyp
+                if vtyp == 'str':          self.emit(f'char* {vname} = NULL;')
+                elif vtyp == 'bool':       self.emit(f'int {vname} = 0;')
+                elif vtyp == 'list':       self.emit(f'KList* {vname} = NULL;')
+                elif vtyp in self.models:  self.emit(f'{vtyp}* {vname} = NULL;')
+                else:                      self.emit(f'double {vname} = 0;')
             for stmt in node.body:
                 self._gen_stmt(stmt)
-            self.emit('return 0;')
+            self.emit(c_ret_default)
             self.indent -= 1
             self.emit('}')
         result = self.lines
         self.lines, self.indent, self.vars = old_lines, old_indent, old_vars
         return result
+
+    def _scan_return_type(self, stmts):
+        """Check if any give statement returns a string or model pointer."""
+        for node in stmts:
+            if isinstance(node, GiveNode):
+                if isinstance(node.value, StringNode):
+                    return 'str'
+                if isinstance(node.value, CallNode) and isinstance(node.value.func, IdentNode):
+                    if node.value.func.name in self.models:
+                        return node.value.func.name  # returns model type
+            if isinstance(node, IfNode):
+                for _, body in node.cases:
+                    t = self._scan_return_type(body)
+                    if t != 'double': return t
+                if node.else_body:
+                    t = self._scan_return_type(node.else_body)
+                    if t != 'double': return t
+            if isinstance(node, RepeatNode):
+                t = self._scan_return_type(node.body)
+                if t != 'double': return t
+            if isinstance(node, EachNode):
+                t = self._scan_return_type(node.body)
+                if t != 'double': return t
+            if isinstance(node, TilNode):
+                t = self._scan_return_type(node.body)
+                if t != 'double': return t
+        return 'double'
 
     def _gen_stmt(self, node):
         if node is None: return
@@ -360,8 +804,11 @@ class CGenerator:
         elif isinstance(node, TilNode): self._gen_til(node)
         elif isinstance(node, FunNode): pass
         elif isinstance(node, GiveNode):
-            val, _ = self._gen_expr(node.value)
-            self.emit(f'return (double)({val});')
+            val, typ = self._gen_expr(node.value)
+            if typ == 'str' or typ in self.models:
+                self.emit(f'return {val};')
+            else:
+                self.emit(f'return (double)({val});')
         elif isinstance(node, TryNode):
             for s in node.try_body: self._gen_stmt(s)
         elif isinstance(node, BreakNode): self.emit('break;')
@@ -378,23 +825,28 @@ class CGenerator:
             val, typ = self._gen_expr(node.value)
             if node.name not in self.vars:
                 self.vars[node.name] = typ
-                if typ == 'str':     self.emit(f'char* {node.name} = {val};')
-                elif typ == 'bool':  self.emit(f'int {node.name} = {val};')
-                elif typ == 'matrix':self.emit(f'KMatrix* {node.name} = {val};')
-                elif typ == 'list':  self.emit(f'KList* {node.name} = {val};')
-                else:                self.emit(f'double {node.name} = {val};')
+                if typ == 'str':          self.emit(f'char* {node.name} = {val};')
+                elif typ == 'bool':       self.emit(f'int {node.name} = {val};')
+                elif typ == 'matrix':     self.emit(f'KMatrix* {node.name} = {val};')
+                elif typ == 'list':       self.emit(f'KList* {node.name} = {val};')
+                elif typ in self.models:  self.emit(f'{typ}* {node.name} = {val};')
+                else:                     self.emit(f'double {node.name} = {val};')
             else:
                 self.emit(f'{node.name} = {val};')
         elif isinstance(node.name, AttrNode):
-            obj_val, _ = self._gen_expr(node.name.obj)
-            val, _ = self._gen_expr(node.value)
+            obj = node.name.obj
             attr = node.name.attr
-            obj_typ = self.vars.get(node.name.obj.name if isinstance(node.name.obj, IdentNode) else '', '')
-            if obj_typ == 'matrix':
-                # mat_set przez set(row, col, val) - obsluzone przez metodę
-                pass
-            else:
-                self.emit(f'{obj_val}.{attr} = {val};')
+            val, vtyp = self._gen_expr(node.value)
+            # self.field = ... inside model method
+            if isinstance(obj, IdentNode) and obj.name == 'self':
+                self.emit(f'self->{attr} = {val};')
+                return
+            obj_val, obj_typ = self._gen_expr(obj)
+            # instance.field = ...
+            if obj_typ in self.models:
+                self.emit(f'{obj_val}->{attr} = {val};')
+                return
+            self.emit(f'{obj_val}.{attr} = {val};')
 
     def _gen_out(self, node):
         val, typ = self._gen_expr(node.value)
@@ -501,6 +953,12 @@ class CGenerator:
             if ltyp != 'str': lval = f'kuda_double_to_str({lval})'
             if rtyp != 'str': rval = f'kuda_double_to_str({rval})'
             return f'kuda_concat({lval}, {rval})', 'str'
+        # String comparison using strcmp
+        if ltyp == 'str' or rtyp == 'str':
+            if op == '==': return f'(strcmp({lval}, {rval}) == 0)', 'bool'
+            if op == '!=': return f'(strcmp({lval}, {rval}) != 0)', 'bool'
+            if op == '<':  return f'(strcmp({lval}, {rval}) < 0)', 'bool'
+            if op == '>':  return f'(strcmp({lval}, {rval}) > 0)', 'bool'
         if ltyp == 'matrix' or rtyp == 'matrix':
             if op == '+': return f'kuda_mat_add({lval}, {rval})', 'matrix'
             if op == '-': return f'kuda_mat_sub({lval}, {rval})', 'matrix'
@@ -514,9 +972,21 @@ class CGenerator:
 
     def _gen_attr_access(self, node):
         obj_val, obj_typ = self._gen_expr(node.obj)
+        attr = node.attr
         if obj_typ == 'matrix':
-            if node.attr == 'rows': return f'((double){obj_val}->rows)', 'double'
-            if node.attr == 'cols': return f'((double){obj_val}->cols)', 'double'
+            if attr == 'rows': return f'((double){obj_val}->rows)', 'double'
+            if attr == 'cols': return f'((double){obj_val}->cols)', 'double'
+        # self.field inside a model method
+        if obj_val == 'self' and '_self_model' in self.vars:
+            model_name = self.vars['_self_model']
+            fields = self.models.get(model_name, {})
+            ftype = fields.get(attr, 'double')
+            return f'self->{attr}', ftype
+        # instance.field (e.g. hero.hp)
+        if obj_typ in self.models:
+            fields = self.models.get(obj_typ, {})
+            ftype = fields.get(attr, 'double')
+            return f'{obj_val}->{attr}', ftype
         return f'{obj_val}', 'double'
 
     def _gen_call(self, node):
@@ -648,17 +1118,43 @@ class CGenerator:
         if name == 'mse':              p,_=args_eval[0];t,_=args_eval[1]; return f'kuda_mse({p},{t})', 'double'
         if name == 'mse_grad':         p,_=args_eval[0];t,_=args_eval[1]; return f'kuda_mse_grad({p},{t})', 'matrix'
 
-        # Funkcja użytkownika
-        args_str = ', '.join(
-            f'(double)(intptr_t)({v})' if t=='str' else f'(double)({v})'
-            for v, t in args_eval
-        )
-        return f'{name}({args_str})', 'double'
+        # Model constructor: Hero("adam") -> Hero_new("adam")
+        if name in self.models:
+            args_str = ', '.join(v for v, t in args_eval)
+            return f'{name}_new({args_str})', name
+
+        # Rename user-defined 'main' to avoid conflict with C main
+        c_name = 'kuda_main' if name == 'main' else name
+
+        # User function call - pass model pointers and strings as-is, cast others to double
+        arg_parts = []
+        for v, t in args_eval:
+            if t in self.models or t == 'str':
+                arg_parts.append(v)
+            else:
+                arg_parts.append(f'(double)({v})')
+        args_str = ', '.join(arg_parts)
+        # Return the function's known return type
+        ret_type = self.func_return_types.get(name, 'double')
+        return f'{c_name}({args_str})', ret_type
 
     def _gen_method_call(self, attr_node, arg_nodes):
         obj_val, obj_typ = self._gen_expr(attr_node.obj)
         method = attr_node.attr
         args_eval = [self._gen_expr(a) for a in arg_nodes]
+
+        # Model instance method call: hero.bark() -> Hero_bark(hero)
+        if obj_typ in self.models:
+            args_str = ', '.join(v for v, t in args_eval)
+            full_args = obj_val + (f', {args_str}' if args_str else '')
+            return f'{obj_typ}_{method}({full_args})', 'double'
+
+        # self.method() inside a model method
+        if obj_val == 'self' and '_self_model' in self.vars:
+            model_name = self.vars['_self_model']
+            args_str = ', '.join(v for v, t in args_eval)
+            full_args = 'self' + (f', {args_str}' if args_str else '')
+            return f'{model_name}_{method}({full_args})', 'double'
 
         if obj_typ == 'matrix':
             if method == 'T':             return f'kuda_mat_T({obj_val})', 'matrix'

@@ -444,7 +444,8 @@ class CGenerator:
             '}',
             '',
             '/* Loss */',
-            'double kuda_mse(KMatrix* p,KMatrix* t){',
+            'double kuda_mse_scalar(double p, double t){ double d=p-t; return d*d; }',
+        'double kuda_mse(KMatrix* p,KMatrix* t){',
             '    double l=0; int n=p->rows*p->cols;',
             '    for(int i=0;i<p->rows;i++) for(int j=0;j<p->cols;j++){double d=p->data[i][j]-t->data[i][j];l+=d*d;}',
             '    return l/n;',
@@ -898,7 +899,21 @@ class CGenerator:
                 self.indent -= 1
                 self.emit('}')
                 return
-        self.emit('/* each - wymaga interpretera */')
+
+        # each x in lista — iteracja po KList
+        iterable, ityp = self._gen_expr(node.iterable)
+        if ityp == 'list':
+            tmp_i = self.fresh_tmp()
+            self.vars[node.var] = 'double'
+            self.emit(f'for (int {tmp_i} = 0; {tmp_i} < {iterable}->len; {tmp_i}++) {{')
+            self.indent += 1
+            self.emit(f'double {node.var} = {iterable}->data[{tmp_i}];')
+            for s in node.body: self._gen_stmt(s)
+            self.indent -= 1
+            self.emit('}')
+        else:
+            # fallback — nie znany typ
+            self.emit(f'/* each: nieznany typ iteracji dla {iterable} */')
 
     def _gen_til(self, node):
         cval, _ = self._gen_expr(node.condition)
@@ -1115,7 +1130,10 @@ class CGenerator:
         if name == 'mat_relu':         m,_=args_eval[0]; return f'kuda_mat_relu({m})', 'matrix'
         if name == 'mat_relu_deriv':   m,_=args_eval[0]; return f'kuda_mat_relu_deriv({m})', 'matrix'
         if name == 'mat_tanh':         m,_=args_eval[0]; return f'kuda_mat_tanh({m})', 'matrix'
-        if name == 'mse':              p,_=args_eval[0];t,_=args_eval[1]; return f'kuda_mse({p},{t})', 'double'
+        if name == 'mse':
+            p,ptyp=args_eval[0]; t,ttyp=args_eval[1]
+            if ptyp == 'matrix': return f'kuda_mse({p},{t})', 'double'
+            return f'kuda_mse_scalar({p},{t})', 'double'
         if name == 'mse_grad':         p,_=args_eval[0];t,_=args_eval[1]; return f'kuda_mse_grad({p},{t})', 'matrix'
 
         # Model constructor: Hero("adam") -> Hero_new("adam")

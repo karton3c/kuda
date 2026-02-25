@@ -212,6 +212,10 @@ class Interpreter:
         if isinstance(node, RepeatNode):
             return self.exec_repeat(node, env)
 
+        # each z unpackingiem
+        if isinstance(node, EachUnpackNode):
+            return self.exec_each_unpack(node, env)
+
         # each
         if isinstance(node, EachNode):
             return self.exec_each(node, env)
@@ -290,6 +294,23 @@ class Interpreter:
             except ContinueSignal:
                 continue
 
+    def exec_each_unpack(self, node, env):
+        iterable = self.eval(node.iterable, env)
+        for item in iterable:
+            child_env = Environment(env)
+            if len(node.vars) == 2 and isinstance(item, (list, tuple)) and len(item) == 2:
+                child_env.set(node.vars[0], item[0])
+                child_env.set(node.vars[1], item[1])
+            else:
+                for i, var in enumerate(node.vars):
+                    child_env.set(var, item[i] if isinstance(item, (list, tuple)) else item)
+            try:
+                self.exec_block(node.body, child_env)
+            except BreakSignal:
+                break
+            except ContinueSignal:
+                continue
+
     def exec_each(self, node, env):
         iterable = self.eval(node.iterable, env)
         for item in iterable:
@@ -361,6 +382,9 @@ class Interpreter:
 
         if isinstance(node, ListNode):
             return [self.eval(e, env) for e in node.elements]
+
+        if isinstance(node, TupleNode):
+            return tuple(self.eval(e, env) for e in node.elements)
 
         if isinstance(node, IdentNode):
             return env.get(node.name)

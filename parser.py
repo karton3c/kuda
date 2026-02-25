@@ -38,6 +38,9 @@ class IndexNode:
 class ListNode:
     def __init__(self, elements): self.elements = elements
 
+class TupleNode:
+    def __init__(self, elements): self.elements = elements
+
 class IfNode:
     def __init__(self, cases, else_body):
         self.cases = cases      # lista (warunek, ciało)
@@ -48,6 +51,9 @@ class RepeatNode:
 
 class EachNode:
     def __init__(self, var, iterable, body): self.var = var; self.iterable = iterable; self.body = body
+
+class EachUnpackNode:
+    def __init__(self, vars, iterable, body): self.vars = vars; self.iterable = iterable; self.body = body
 
 class TilNode:
     def __init__(self, condition, body): self.condition = condition; self.body = body
@@ -131,7 +137,7 @@ class Parser:
         raise ParseError(f"Expected identifier, got '{tok.type}' ('{tok.value}')", tok.line)
 
     def skip_newlines(self):
-        while self.current().type == TT_NEWLINE:
+        while self.current().type in (TT_NEWLINE, TT_INDENT, TT_DEDENT):
             self.advance()
 
     def parse(self):
@@ -267,13 +273,25 @@ class Parser:
 
     def parse_each(self):
         self.advance()  # 'each'
-        var = self.expect_identifier()
+        first_var = self.expect_identifier()
+        if self.current().type == TT_COMMA:
+            # Tuple unpacking: each x, t in data:
+            vars = [first_var]
+            while self.current().type == TT_COMMA:
+                self.advance()
+                vars.append(self.expect_identifier())
+            self.expect('in')
+            iterable = self.parse_expr()
+            self.expect(TT_COLON)
+            self._end_statement()
+            body = self.parse_block()
+            return EachUnpackNode(vars, iterable, body)
         self.expect('in')
         iterable = self.parse_expr()
         self.expect(TT_COLON)
         self._end_statement()
         body = self.parse_block()
-        return EachNode(var, iterable, body)
+        return EachNode(first_var, iterable, body)
 
     def parse_til(self):
         self.advance()  # 'til'
@@ -452,16 +470,29 @@ class Parser:
         if tok.type == TT_LPAREN:
             self.advance()
             expr = self.parse_expr()
+            if self.current().type == TT_COMMA:
+                # To jest krotka
+                elements = [expr]
+                while self.current().type == TT_COMMA:
+                    self.advance()
+                    if self.current().type == TT_RPAREN:
+                        break
+                    elements.append(self.parse_expr())
+                self.expect(TT_RPAREN)
+                return TupleNode(elements)
             self.expect(TT_RPAREN)
             return expr
 
         if tok.type == TT_LBRACKET:
             self.advance()
+            self.skip_newlines()
             elements = []
             while self.current().type != TT_RBRACKET:
                 elements.append(self.parse_expr())
+                self.skip_newlines()
                 if self.current().type == TT_COMMA:
                     self.advance()
+                    self.skip_newlines()
             self.expect(TT_RBRACKET)
             return ListNode(elements)
 

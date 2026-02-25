@@ -11,10 +11,10 @@ from lexer import Lexer, LexerError
 from parser import Parser, ParseError
 from interpreter import Interpreter, RuntimeError_
 
-VERSION = "0.2.3"
-    
+VERSION = "0.2.4"
+
 HELP = """
-Kuda v0.2.2 - Fast ML language that compiles to C
+Kuda v0.2.4 - Fast ML language that compiles to C
 
 Usage:
   kuda <file.kuda>            Run file (compiles to C, super fast!)

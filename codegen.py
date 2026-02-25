@@ -1,4 +1,4 @@
-# Kuda v0.2.1 - C Code Generator with Full Builtins Support
+# Kuda v0.2.4 - C Code Generator with Full Builtins Support
 from parser import *
 import math
 

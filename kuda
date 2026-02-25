@@ -1,3 +1,3 @@
-#!/bin/bash
+#!/bin/bash 
 KUDA_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-exec python3 "$KUDA_DIR/main.py" "$@"
+exec python3 "$KUDA_DIR/main.py" "$@"s

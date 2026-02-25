@@ -1075,8 +1075,14 @@ class CGenerator:
         if name == 'str':
             val, typ = args_eval[0]
             return (val, 'str') if typ == 'str' else (f'kuda_double_to_str({val})', 'str')
-        if name == 'int':   val, _ = args_eval[0]; return f'((double)(long long)({val}))', 'double'
-        if name == 'float': val, _ = args_eval[0]; return f'((double)({val}))', 'double'
+        if name == 'int':
+            val, typ = args_eval[0]
+            if typ == 'str': return f'((double)atoi({val}))', 'double'
+            return f'((double)(long long)({val}))', 'double'
+        if name == 'float':
+            val, typ = args_eval[0]
+            if typ == 'str': return f'((double)atof({val}))', 'double'
+            return f'((double)({val}))', 'double'
         if name == 'abs':   val, _ = args_eval[0]; return f'fabs({val})', 'double'
         if name == 'round': val, _ = args_eval[0]; return f'round({val})', 'double'
         if name == 'exp':   val, _ = args_eval[0]; return f'exp({val})', 'double'

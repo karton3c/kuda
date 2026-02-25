@@ -222,7 +222,7 @@ class CGenerator:
 
     def _runtime(self):
         return [
-            '/* Kuda v0.2.1 Runtime - Full Featured */',
+            '/* Kuda v0.2.4 Runtime - Full Featured */',
             '#define MAX_STR  4096',
             '#define MAX_MAT  512',
             '#define MAX_LIST 1024',

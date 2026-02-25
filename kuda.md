@@ -1,5 +1,5 @@
 # Kuda Language Reference
-**Version 0.2.1**
+**Version 0.2.4**
 
 Kuda is my own programming language with Python-like syntax that compiles to C for fast execution. This document covers everything you need to write Kuda programs
 
@@ -1039,4 +1039,4 @@ out("Max: " + str(np.max(data)))
 
 ---
 
-*Kuda v0.2.1 — open source, contributions welcome!*
+*Kuda v0.2.4 — open source, contributions welcome!*

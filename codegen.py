@@ -113,10 +113,25 @@ class CGenerator:
         code generation so we know types of every variable everywhere.
         """
         STR_FUNCS = {'input', 'str', 'caps', 'small', 'trim', 'swap', 'merge', 'read'}
+
+        def is_str_expr(node):
+            if isinstance(node, StringNode): return True
+            if isinstance(node, BinOpNode) and node.op == '+':
+                return is_str_expr(node.left) or is_str_expr(node.right)
+            if isinstance(node, CallNode) and isinstance(node.func, IdentNode):
+                fname = node.func.name
+                if fname in STR_FUNCS: return True
+                if self.func_return_types.get(fname) == 'str': return True
+            if isinstance(node, IdentNode):
+                return var_types.get(node.name) == 'str' or self.vars.get(node.name) == 'str'
+            return False
+
         for node in stmts:
             if isinstance(node, AssignNode) and isinstance(node.name, str):
                 v = node.name
                 if isinstance(node.value, StringNode):
+                    var_types[v] = 'str'
+                elif is_str_expr(node.value):
                     var_types[v] = 'str'
                 elif isinstance(node.value, CallNode) and isinstance(node.value.func, IdentNode):
                     fname = node.value.func.name
@@ -145,11 +160,24 @@ class CGenerator:
 
     def _scan_call_sites(self, stmts):
         """Scan all statements to find how functions are called and what types they receive."""
+        STR_FUNCS = {'input', 'str', 'caps', 'small', 'trim', 'swap', 'merge', 'read'}
+
+        def is_str_expr(arg):
+            if isinstance(arg, StringNode): return True
+            if isinstance(arg, BinOpNode) and arg.op == '+':
+                return is_str_expr(arg.left) or is_str_expr(arg.right)
+            if isinstance(arg, CallNode) and isinstance(arg.func, IdentNode):
+                fname = arg.func.name
+                if fname in STR_FUNCS: return True
+                if self.func_return_types.get(fname) == 'str': return True
+            if isinstance(arg, IdentNode):
+                return self.vars.get(arg.name) == 'str'
+            return False
+
         def get_arg_type(arg):
+            if is_str_expr(arg): return 'str'
             if isinstance(arg, IdentNode):
                 return self.vars.get(arg.name, 'double')
-            elif isinstance(arg, StringNode):
-                return 'str'
             elif isinstance(arg, CallNode) and isinstance(arg.func, IdentNode):
                 fname = arg.func.name
                 if fname in self.models: return fname
@@ -679,33 +707,48 @@ class CGenerator:
         'undeclared variable' errors when variables are assigned inside if/loops.
         """
         found = {}
+        STR_FUNCS = {'input', 'str', 'caps', 'small', 'trim', 'swap', 'merge', 'read', 'kuda_concat'}
+
+        def is_str_expr(node):
+            """Rekurencyjnie sprawdź czy wyrażenie zwraca string."""
+            if isinstance(node, StringNode): return True
+            if isinstance(node, BinOpNode) and node.op == '+':
+                return is_str_expr(node.left) or is_str_expr(node.right)
+            if isinstance(node, CallNode) and isinstance(node.func, IdentNode):
+                fname = node.func.name
+                if fname in STR_FUNCS: return True
+                if fname in getattr(self, 'func_return_types', {}) and self.func_return_types[fname] == 'str': return True
+            if isinstance(node, IdentNode):
+                # Jeśli zmienna była już wykryta jako str
+                return found.get(node.name) == 'str' or self.vars.get(node.name) == 'str'
+            return False
+
         def scan(stmts):
             for node in stmts:
                 if isinstance(node, AssignNode) and isinstance(node.name, str):
-                    if node.name not in known_params and node.name not in found:
+                    if node.name not in known_params:
                         if isinstance(node.value, StringNode):
                             found[node.name] = 'str'
                         elif isinstance(node.value, BoolNode):
                             found[node.name] = 'bool'
                         elif isinstance(node.value, ListNode):
                             found[node.name] = 'list'
+                        elif is_str_expr(node.value):
+                            found[node.name] = 'str'
                         elif isinstance(node.value, CallNode):
-                            # Detect common str-returning calls
                             if isinstance(node.value.func, IdentNode):
                                 fname = node.value.func.name
-                                if fname in ('input', 'str', 'caps', 'small', 'trim', 'swap', 'merge', 'read', 'kuda_concat'):
-                                    found[node.name] = 'str'
-                                elif fname in self.models:
+                                if fname in self.models:
                                     found[node.name] = fname
                                 elif fname in getattr(self, 'func_return_types', {}):
                                     ret = self.func_return_types[fname]
                                     found[node.name] = ret if ret != 'double' else 'double'
                                 else:
-                                    found[node.name] = 'double'
+                                    found.setdefault(node.name, 'double')
                             else:
-                                found[node.name] = 'double'
+                                found.setdefault(node.name, 'double')
                         else:
-                            found[node.name] = 'double'
+                            found.setdefault(node.name, 'double')
                 if isinstance(node, IfNode):
                     for _, body in node.cases:
                         scan(body)
@@ -798,6 +841,14 @@ class CGenerator:
     def _gen_stmt(self, node):
         if node is None: return
         if isinstance(node, AssignNode): self._gen_assign(node)
+        elif isinstance(node, IndexAssignNode):
+            obj, otyp = self._gen_expr(node.target.obj)
+            idx, _ = self._gen_expr(node.target.index)
+            val, _ = self._gen_expr(node.value)
+            if otyp == 'list':
+                self.emit(f'{obj}->data[(int)({idx})] = {val};')
+            else:
+                self.emit(f'{obj}[(int)({idx})] = {val};')
         elif isinstance(node, OutNode): self._gen_out(node)
         elif isinstance(node, IfNode): self._gen_if(node)
         elif isinstance(node, RepeatNode): self._gen_repeat(node)

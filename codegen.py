@@ -841,6 +841,7 @@ class CGenerator:
     def _gen_stmt(self, node):
         if node is None: return
         if isinstance(node, AssignNode): self._gen_assign(node)
+        elif isinstance(node, AugAssignNode): self._gen_aug_assign(node)
         elif isinstance(node, IndexAssignNode):
             obj, otyp = self._gen_expr(node.target.obj)
             idx, _ = self._gen_expr(node.target.index)
@@ -899,6 +900,21 @@ class CGenerator:
                 self.emit(f'{obj_val}->{attr} = {val};')
                 return
             self.emit(f'{obj_val}.{attr} = {val};')
+
+    def _gen_aug_assign(self, node):
+        """Handle augmented assignment like i += 1, x *= 2, etc."""
+        var = node.name
+        op = node.op  # '+=', '-=', '*=', '/=', etc.
+        val, _ = self._gen_expr(node.value)
+        
+        # Convert += to +, -= to -, etc.
+        base_op = op[0]  # '+' from '+='
+        
+        if var not in self.vars:
+            self.vars[var] = 'double'
+            self.emit(f'double {var} = 0;')
+        
+        self.emit(f'{var} = {var} {base_op} {val};')
 
     def _gen_out(self, node):
         val, typ = self._gen_expr(node.value)

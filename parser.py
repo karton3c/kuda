@@ -149,6 +149,11 @@ class Parser:
         raise ParseError(f"Expected identifier, got '{tok.type}' ('{tok.value}')", tok.line)
 
     def skip_newlines(self):
+        while self.current().type == TT_NEWLINE:
+            self.advance()
+
+    def skip_newlines_and_indent(self):
+        """Używane wewnątrz [], {} gdzie INDENT/DEDENT nie mają znaczenia"""
         while self.current().type in (TT_NEWLINE, TT_INDENT, TT_DEDENT):
             self.advance()
 
@@ -163,6 +168,9 @@ class Parser:
         return ProgramNode(statements)
 
     def parse_block(self):
+        # Ignoruj puste linie przed blokiem
+        while self.current().type == TT_NEWLINE:
+            self.advance()
         self.expect(TT_INDENT)
         self.skip_newlines()
         statements = []
@@ -511,39 +519,39 @@ class Parser:
 
         if tok.type == TT_LBRACE:
             self.advance()
-            self.skip_newlines()
+            self.skip_newlines_and_indent()
             pairs = []
             while self.current().type != TT_RBRACE:
                 key = self.parse_expr()
                 self.expect(TT_COLON)
                 val = self.parse_expr()
                 pairs.append((key, val))
-                self.skip_newlines()
+                self.skip_newlines_and_indent()
                 if self.current().type == TT_COMMA:
                     self.advance()
-                    self.skip_newlines()
+                    self.skip_newlines_and_indent()
             self.expect(TT_RBRACE)
             return DictNode(pairs)
 
         if tok.type == TT_LBRACKET:
             self.advance()
-            self.skip_newlines()
+            self.skip_newlines_and_indent()
             elements = []
             while self.current().type != TT_RBRACKET:
                 elements.append(self.parse_expr())
-                self.skip_newlines()
+                self.skip_newlines_and_indent()
                 # list comprehension: [expr each x in lista]
                 if self.current().type == 'each' and len(elements) == 1:
                     self.advance()
                     var = self.expect_identifier()
                     self.expect('in')
                     iterable = self.parse_expr()
-                    self.skip_newlines()
+                    self.skip_newlines_and_indent()
                     self.expect(TT_RBRACKET)
                     return ListCompNode(elements[0], var, iterable)
                 if self.current().type == TT_COMMA:
                     self.advance()
-                    self.skip_newlines()
+                    self.skip_newlines_and_indent()
             self.expect(TT_RBRACKET)
             return ListNode(elements)
 

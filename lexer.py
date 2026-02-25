@@ -152,8 +152,12 @@ class Lexer:
                 spaces += 1
             self.pos += 1
 
-        # Pomiń puste linie i komentarze
+        # Pomiń puste linie i komentarze — ale zachowaj pozycję
         if self.pos < len(self.source) and self.source[self.pos] in ('\n', '#'):
+            return
+
+        # Pomiń też linie złożone tylko z białych znaków
+        if self.pos >= len(self.source):
             return
 
         current_indent = self.indent_stack[-1]

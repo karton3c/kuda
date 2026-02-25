@@ -198,6 +198,25 @@ class Interpreter:
         if isinstance(node, AssignNode):
             return self.exec_assign(node, env)
 
+        # Skrócone przypisanie += -= *= /=
+        if isinstance(node, AugAssignNode):
+            current = env.get(node.name)
+            value = self.eval(node.value, env)
+            if node.op == '+': result = current + value
+            elif node.op == '-': result = current - value
+            elif node.op == '*': result = current * value
+            elif node.op == '/': result = current / value
+            env.set_or_assign(node.name, result)
+            return
+
+        # Przypisanie do indeksu d["klucz"] = x
+        if isinstance(node, IndexAssignNode):
+            obj = self.eval(node.target.obj, env)
+            idx = self.eval(node.target.index, env)
+            val = self.eval(node.value, env)
+            obj[idx] = val
+            return
+
         # out()
         if isinstance(node, OutNode):
             val = self.eval(node.value, env)
@@ -386,6 +405,18 @@ class Interpreter:
         if isinstance(node, TupleNode):
             return tuple(self.eval(e, env) for e in node.elements)
 
+        if isinstance(node, DictNode):
+            return {self.eval(k, env): self.eval(v, env) for k, v in node.pairs}
+
+        if isinstance(node, ListCompNode):
+            iterable = self.eval(node.iterable, env)
+            result = []
+            for item in iterable:
+                child_env = Environment(env)
+                child_env.set(node.var, item)
+                result.append(self.eval(node.expr, child_env))
+            return result
+
         if isinstance(node, IdentNode):
             return env.get(node.name)
 
@@ -433,6 +464,7 @@ class Interpreter:
         if op == '-': return left - right
         if op == '*': return left * right
         if op == '/': return left / right
+        if op == '%': return left % right
         if op == '==': return left == right
         if op == '!=': return left != right
         if op == '<': return left < right

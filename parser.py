@@ -35,11 +35,23 @@ class AttrNode:
 class IndexNode:
     def __init__(self, obj, index): self.obj = obj; self.index = index
 
+class IndexAssignNode:
+    def __init__(self, target, value): self.target = target; self.value = value
+
 class ListNode:
     def __init__(self, elements): self.elements = elements
 
 class TupleNode:
     def __init__(self, elements): self.elements = elements
+
+class DictNode:
+    def __init__(self, pairs): self.pairs = pairs  # lista (klucz, wartość)
+
+class AugAssignNode:
+    def __init__(self, name, op, value): self.name = name; self.op = op; self.value = value
+
+class ListCompNode:
+    def __init__(self, expr, var, iterable): self.expr = expr; self.var = var; self.iterable = iterable
 
 class IfNode:
     def __init__(self, cases, else_body):
@@ -345,17 +357,31 @@ class Parser:
         expr = self.parse_expr()
 
         if self.current().type == TT_ASSIGN:
-            # Sprawdź czy lewa strona to identyfikator lub atrybut
             self.advance()
             value = self.parse_expr()
             self._end_statement()
             if isinstance(expr, IdentNode):
                 return AssignNode(expr.name, value)
             elif isinstance(expr, AttrNode):
-                # self.x = ... lub obj.x = ...
                 return AssignNode(expr, value)
+            elif isinstance(expr, IndexNode):
+                return IndexAssignNode(expr, value)
             else:
                 raise ParseError("Invalid left-hand side of assignment", self.current().line)
+
+        # += -= *= /=
+        aug_ops = {
+            TT_PLUS_EQ: '+', TT_MINUS_EQ: '-', TT_MUL_EQ: '*', TT_DIV_EQ: '/'
+        }
+        if self.current().type in aug_ops:
+            op = aug_ops[self.current().type]
+            self.advance()
+            value = self.parse_expr()
+            self._end_statement()
+            if isinstance(expr, IdentNode):
+                return AugAssignNode(expr.name, op, value)
+            else:
+                raise ParseError("Invalid left-hand side of augmented assignment", self.current().line)
 
         self._end_statement()
         return expr
@@ -483,6 +509,22 @@ class Parser:
             self.expect(TT_RPAREN)
             return expr
 
+        if tok.type == TT_LBRACE:
+            self.advance()
+            self.skip_newlines()
+            pairs = []
+            while self.current().type != TT_RBRACE:
+                key = self.parse_expr()
+                self.expect(TT_COLON)
+                val = self.parse_expr()
+                pairs.append((key, val))
+                self.skip_newlines()
+                if self.current().type == TT_COMMA:
+                    self.advance()
+                    self.skip_newlines()
+            self.expect(TT_RBRACE)
+            return DictNode(pairs)
+
         if tok.type == TT_LBRACKET:
             self.advance()
             self.skip_newlines()
@@ -490,6 +532,15 @@ class Parser:
             while self.current().type != TT_RBRACKET:
                 elements.append(self.parse_expr())
                 self.skip_newlines()
+                # list comprehension: [expr each x in lista]
+                if self.current().type == 'each' and len(elements) == 1:
+                    self.advance()
+                    var = self.expect_identifier()
+                    self.expect('in')
+                    iterable = self.parse_expr()
+                    self.skip_newlines()
+                    self.expect(TT_RBRACKET)
+                    return ListCompNode(elements[0], var, iterable)
                 if self.current().type == TT_COMMA:
                     self.advance()
                     self.skip_newlines()

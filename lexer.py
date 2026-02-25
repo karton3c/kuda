@@ -21,7 +21,13 @@ TT_LPAREN    = 'LPAREN'
 TT_RPAREN    = 'RPAREN'
 TT_LBRACKET  = 'LBRACKET'
 TT_RBRACKET  = 'RBRACKET'
+TT_LBRACE    = 'LBRACE'
+TT_RBRACE    = 'RBRACE'
 TT_COLON     = 'COLON'
+TT_PLUS_EQ   = 'PLUS_EQ'
+TT_MINUS_EQ  = 'MINUS_EQ'
+TT_MUL_EQ    = 'MUL_EQ'
+TT_DIV_EQ    = 'DIV_EQ'
 TT_COMMA     = 'COMMA'
 TT_DOT       = 'DOT'
 TT_NEWLINE   = 'NEWLINE'
@@ -202,43 +208,55 @@ class Lexer:
 
         two = ch + (self.current() or '')
 
-        if two == '==':
+        if two == '==':\
             self.advance(); self.tokens.append(Token(TT_EQ, '==', line))
-        elif two == '!=':
+        elif two == '!=':\
             self.advance(); self.tokens.append(Token(TT_NEQ, '!=', line))
-        elif two == '<=':
+        elif two == '<=':\
             self.advance(); self.tokens.append(Token(TT_LTE, '<=', line))
-        elif two == '>=':
+        elif two == '>=':\
             self.advance(); self.tokens.append(Token(TT_GTE, '>=', line))
-        elif ch == '=':
+        elif two == '+=':\
+            self.advance(); self.tokens.append(Token(TT_PLUS_EQ, '+=', line))
+        elif two == '-=':\
+            self.advance(); self.tokens.append(Token(TT_MINUS_EQ, '-=', line))
+        elif two == '*=':\
+            self.advance(); self.tokens.append(Token(TT_MUL_EQ, '*=', line))
+        elif two == '/=':\
+            self.advance(); self.tokens.append(Token(TT_DIV_EQ, '/=', line))
+        elif ch == '=':\
             self.tokens.append(Token(TT_ASSIGN, '=', line))
-        elif ch == '<':
+        elif ch == '<':\
             self.tokens.append(Token(TT_LT, '<', line))
-        elif ch == '>':
+        elif ch == '>':\
             self.tokens.append(Token(TT_GT, '>', line))
-        elif ch == '+':
+        elif ch == '+':\
             self.tokens.append(Token(TT_PLUS, '+', line))
-        elif ch == '-':
+        elif ch == '-':\
             self.tokens.append(Token(TT_MINUS, '-', line))
-        elif ch == '*':
+        elif ch == '*':\
             self.tokens.append(Token(TT_MUL, '*', line))
-        elif ch == '/':
+        elif ch == '/':\
             self.tokens.append(Token(TT_DIV, '/', line))
-        elif ch == '%':
+        elif ch == '%':\
             self.tokens.append(Token(TT_MOD, '%', line))
-        elif ch == '(':
+        elif ch == '(':\
             self.tokens.append(Token(TT_LPAREN, '(', line))
-        elif ch == ')':
+        elif ch == ')':\
             self.tokens.append(Token(TT_RPAREN, ')', line))
-        elif ch == '[':
+        elif ch == '[':\
             self.tokens.append(Token(TT_LBRACKET, '[', line))
-        elif ch == ']':
+        elif ch == ']':\
             self.tokens.append(Token(TT_RBRACKET, ']', line))
-        elif ch == ':':
+        elif ch == '{':\
+            self.tokens.append(Token(TT_LBRACE, '{', line))
+        elif ch == '}':\
+            self.tokens.append(Token(TT_RBRACE, '}', line))
+        elif ch == ':':\
             self.tokens.append(Token(TT_COLON, ':', line))
-        elif ch == ',':
+        elif ch == ',':\
             self.tokens.append(Token(TT_COMMA, ',', line))
-        elif ch == '.':
+        elif ch == '.':\
             self.tokens.append(Token(TT_DOT, '.', line))
-        else:
+        else:\
             raise LexerError(f"Unknown character: '{ch}'", line)

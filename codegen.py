@@ -379,6 +379,21 @@ class CGenerator:
             '',
             'int kuda_rand(int lo,int hi){return lo+rand()%(hi-lo+1);}',
             'double kuda_rand_float(){return (double)rand()/RAND_MAX;}',
+            'double kuda_rand_normal(double mean, double std) {',
+            '    /* Box-Muller transform */',
+            '    double u1 = ((double)rand()+1.0)/(RAND_MAX+1.0);',
+            '    double u2 = ((double)rand()+1.0)/(RAND_MAX+1.0);',
+            '    double z = sqrt(-2.0*log(u1)) * cos(2.0*3.14159265358979*u2);',
+            '    return mean + std * z;',
+            '}',
+            'void kuda_shuffle(KList* l) {',
+            '    for (int i = l->len - 1; i > 0; i--) {',
+            '        int j = rand() % (i + 1);',
+            '        double tmp = l->data[i];',
+            '        l->data[i] = l->data[j];',
+            '        l->data[j] = tmp;',
+            '    }',
+            '}',
             'char* kuda_input(const char* p){',
             '    printf("%s",p); char* b=malloc(MAX_STR);',
             '    if(!fgets(b,MAX_STR,stdin)) b[0]=0;',
@@ -841,7 +856,6 @@ class CGenerator:
     def _gen_stmt(self, node):
         if node is None: return
         if isinstance(node, AssignNode): self._gen_assign(node)
-        elif isinstance(node, AugAssignNode): self._gen_aug_assign(node)
         elif isinstance(node, IndexAssignNode):
             obj, otyp = self._gen_expr(node.target.obj)
             idx, _ = self._gen_expr(node.target.index)
@@ -900,21 +914,6 @@ class CGenerator:
                 self.emit(f'{obj_val}->{attr} = {val};')
                 return
             self.emit(f'{obj_val}.{attr} = {val};')
-
-    def _gen_aug_assign(self, node):
-        """Handle augmented assignment like i += 1, x *= 2, etc."""
-        var = node.name
-        op = node.op  # '+=', '-=', '*=', '/=', etc.
-        val, _ = self._gen_expr(node.value)
-        
-        # Convert += to +, -= to -, etc.
-        base_op = op[0]  # '+' from '+='
-        
-        if var not in self.vars:
-            self.vars[var] = 'double'
-            self.emit(f'double {var} = 0;')
-        
-        self.emit(f'{var} = {var} {base_op} {val};')
 
     def _gen_out(self, node):
         val, typ = self._gen_expr(node.value)
@@ -1048,7 +1047,7 @@ class CGenerator:
                 if ltyp == 'matrix' and rtyp == 'matrix': return f'kuda_mat_mul({lval}, {rval})', 'matrix'
                 if ltyp == 'matrix': return f'kuda_mat_scale({lval}, {rval})', 'matrix'
                 return f'kuda_mat_scale({rval}, {lval})', 'matrix'
-        if op == '%': return f'((double)fmod((double)({lval}),(double)({rval})))', 'double'
+        if op == '%': return f'((double)((long long)({lval}) % (long long)({rval})))', 'double'
         typ = 'bool' if op in ('==','!=','<','>','<=','>=') else 'double'
         return f'({lval} {op} {rval})', typ
 
@@ -1111,6 +1110,13 @@ class CGenerator:
         if name == 'min' and len(args_eval)==2: a,_=args_eval[0];b,_=args_eval[1]; return f'fmin({a},{b})', 'double'
         if name == 'rand':       lo,_=args_eval[0];hi,_=args_eval[1]; return f'((double)kuda_rand((int)({lo}),(int)({hi})))', 'double'
         if name == 'rand_float': return 'kuda_rand_float()', 'double'
+        if name == 'rand_normal':
+            m,_=args_eval[0]; s,_=args_eval[1]
+            return f'kuda_rand_normal({m},{s})', 'double'
+        if name == 'shuffle':
+            l,_=args_eval[0]
+            self.emit(f'kuda_shuffle({l});')
+            return '0', 'double'
         if name == 'wait':       val,_=args_eval[0]; return f'sleep((int)({val}))', 'double'
         if name == 'time':       return '((double)clock()/CLOCKS_PER_SEC)', 'double'
         if name == 'input':      p = args_eval[0][0] if args_eval else '""'; return f'kuda_input({p})', 'str'

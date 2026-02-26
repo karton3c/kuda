@@ -1,5 +1,6 @@
 from parser import *
 import sys
+import random
 import numpy as np
 
 # === Sygnały kontroli przepływu ===
@@ -136,7 +137,10 @@ class Interpreter:
         env.set('min',   lambda args: min(args) if len(args) > 1 else min(args[0]))
         env.set('sum',   lambda args: sum(args[0]))
         env.set('round', lambda args: round(args[0], int(args[1]) if len(args) > 1 else 0))
-        env.set('rand',  lambda args: random.randint(int(args[0]), int(args[1])))
+        env.set('rand',        lambda args: random.randint(int(args[0]), int(args[1])))
+        env.set('rand_float',  lambda args: random.random())
+        env.set('rand_normal', lambda args: random.gauss(args[0], args[1]))
+        env.set('shuffle',     lambda args: random.shuffle(args[0]) or args[0])
 
         # Stringi
         env.set('cut',   lambda args: args[0].split(args[1] if len(args) > 1 else None))

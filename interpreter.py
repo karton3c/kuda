@@ -2,6 +2,7 @@ from parser import *
 import sys
 import random
 import numpy as np
+from data_builder import DataBuilder
 
 # === Sygnały kontroli przepływu ===
 
@@ -173,6 +174,9 @@ class Interpreter:
         # Time
         env.set('wait',  lambda args: _time.sleep(args[0]))
         env.set('time',  lambda args: _time.time())
+
+        # DataBuilder
+        env.set('data', DataBuilder())
 
         # Matrix i ML
         env.set('Matrix', lambda args: np.random.randn(int(args[0]), int(args[1])) * 0.1 if len(args)==2 else np.zeros((int(args[0]), int(args[1]))))

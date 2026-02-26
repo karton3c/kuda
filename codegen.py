@@ -84,7 +84,7 @@ class CGenerator:
             self.vars[vname] = vtyp
             if vtyp == 'str':          self.emit(f'char* {vname} = NULL;')
             elif vtyp == 'bool':       self.emit(f'int {vname} = 0;')
-            elif vtyp == 'list':       self.emit(f'KList* {vname} = NULL;')
+            elif vtyp in ('list', 'strlist'):  self.emit(f'KList* {vname} = NULL;')
             elif vtyp in self.models:  self.emit(f'{vtyp}* {vname} = NULL;')
             else:                      self.emit(f'double {vname} = 0;')
         for stmt in main_stmts:
@@ -134,7 +134,9 @@ class CGenerator:
                 elif is_str_expr(node.value):
                     var_types[v] = 'str'
                 elif isinstance(node.value, ListNode):
-                    var_types[v] = 'list'
+                    # Check if list contains strings
+                    has_str = any(isinstance(e, StringNode) for e in node.value.elements)
+                    var_types[v] = 'strlist' if has_str else 'list'
                 elif isinstance(node.value, CallNode) and isinstance(node.value.func, IdentNode):
                     fname = node.value.func.name
                     if fname in self.models:
@@ -700,7 +702,7 @@ class CGenerator:
             self.vars[vname] = vtyp
             if vtyp == 'str':    self.emit(f'char* {vname} = NULL;')
             elif vtyp == 'bool': self.emit(f'int {vname} = 0;')
-            elif vtyp == 'list': self.emit(f'KList* {vname} = NULL;')
+            elif vtyp in ('list', 'strlist'): self.emit(f'KList* {vname} = NULL;')
             else:                self.emit(f'double {vname} = 0;')
         
         for stmt in fun_node.body:
@@ -749,7 +751,8 @@ class CGenerator:
                         elif isinstance(node.value, BoolNode):
                             found[node.name] = 'bool'
                         elif isinstance(node.value, ListNode):
-                            found[node.name] = 'list'
+                            has_str = any(isinstance(e, StringNode) for e in node.value.elements)
+                            found[node.name] = 'strlist' if has_str else 'list'
                         elif is_str_expr(node.value):
                             found[node.name] = 'str'
                         elif isinstance(node.value, CallNode):
@@ -816,7 +819,7 @@ class CGenerator:
                 self.vars[vname] = vtyp
                 if vtyp == 'str':          self.emit(f'char* {vname} = NULL;')
                 elif vtyp == 'bool':       self.emit(f'int {vname} = 0;')
-                elif vtyp == 'list':       self.emit(f'KList* {vname} = NULL;')
+                elif vtyp in ('list', 'strlist'):  self.emit(f'KList* {vname} = NULL;')
                 elif vtyp in self.models:  self.emit(f'{vtyp}* {vname} = NULL;')
                 else:                      self.emit(f'double {vname} = 0;')
             for stmt in node.body:
@@ -902,7 +905,7 @@ class CGenerator:
                 if typ == 'str':          self.emit(f'char* {node.name} = {val};')
                 elif typ == 'bool':       self.emit(f'int {node.name} = {val};')
                 elif typ == 'matrix':     self.emit(f'KMatrix* {node.name} = {val};')
-                elif typ == 'list':       self.emit(f'KList* {node.name} = {val};')
+                elif typ in ('list', 'strlist'): self.emit(f'KList* {node.name} = {val};')
                 elif typ in self.models:  self.emit(f'{typ}* {node.name} = {val};')
                 else:                     self.emit(f'double {node.name} = {val};')
             else:
@@ -925,7 +928,7 @@ class CGenerator:
     def _gen_out(self, node):
         val, typ = self._gen_expr(node.value)
         if typ == 'str':    self.emit(f'kuda_print_str({val});')
-        elif typ == 'list':   self.emit(f'kuda_print_list({val});')
+        elif typ in ('list', 'strlist'): self.emit(f'kuda_print_list({val});')
         elif typ == 'bool': self.emit(f'kuda_print_bool({val});')
         elif typ == 'matrix': self.emit(f'kuda_mat_print({val});')
         else:               self.emit(f'kuda_print_double({val});')
@@ -1007,10 +1010,15 @@ class CGenerator:
             # Create a new list and add all elements
             tmp = self.fresh_tmp()
             self.emit(f'KList* {tmp} = kuda_list_new();')
+            is_strlist = False
             for elem in node.elements:
-                val, _ = self._gen_expr(elem)
-                self.emit(f'kuda_list_add({tmp}, {val});')
-            return tmp, 'list'
+                val, typ = self._gen_expr(elem)
+                if typ == 'str':
+                    is_strlist = True
+                    self.emit(f'kuda_list_add({tmp}, (double)(intptr_t)({val}));')
+                else:
+                    self.emit(f'kuda_list_add({tmp}, {val});')
+            return tmp, 'strlist' if is_strlist else 'list'
         if isinstance(node, IdentNode):
             if node.name == 'pi': return 'M_PI', 'double'
             if node.name == 'True': return '1', 'bool'
@@ -1026,6 +1034,8 @@ class CGenerator:
         if isinstance(node, IndexNode):
             obj, otyp = self._gen_expr(node.obj)
             idx, _ = self._gen_expr(node.index)
+            if otyp == 'strlist':
+                return f'((char*)(intptr_t)kuda_list_grab({obj}, (int)({idx})))', 'str'
             if otyp == 'list':
                 return f'kuda_list_grab({obj}, (int)({idx}))', 'double'
             return f'{obj}[(int)({idx})]', 'double'

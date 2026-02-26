@@ -327,6 +327,20 @@ class CGenerator:
             '    }',
             '    printf("]\\n");',
             '}',
+            'char* kuda_list_to_str(KList* l) {',
+            '    char buf[MAX_STR]; buf[0] = 0; strcat(buf, "[");',
+            '    for (int i = 0; i < l->len; i++) {',
+            '        char tmp[64];',
+            '        if (l->data[i]==(long long)l->data[i]) sprintf(tmp,"%lld",(long long)l->data[i]);',
+            '        else sprintf(tmp,"%.6g",l->data[i]);',
+            '        strcat(buf, tmp);',
+            '        if (i < l->len - 1) strcat(buf, ", ");',
+            '    }',
+            '    strcat(buf, "]"); char* r = strdup(buf); return r;',
+            '}',
+            'double kuda_list_sum(KList* l) {',
+            '    double s = 0; for (int i = 0; i < l->len; i++) s += l->data[i]; return s;',
+            '}',
             '',
             '/* Strings */',
             'char* kuda_concat(const char* a, const char* b) {',
@@ -1118,7 +1132,9 @@ class CGenerator:
 
         if name == 'str':
             val, typ = args_eval[0]
-            return (val, 'str') if typ == 'str' else (f'kuda_double_to_str({val})', 'str')
+            if typ == 'str': return val, 'str'
+            if typ in ('list', 'strlist'): return f'kuda_list_to_str({val})', 'str'
+            return f'kuda_double_to_str({val})', 'str'
         if name == 'int':
             val, typ = args_eval[0]
             if typ == 'str': return f'((double)atoi({val}))', 'double'
@@ -1154,7 +1170,11 @@ class CGenerator:
         if name == 'len':
             val,typ=args_eval[0]
             if typ=='str': return f'((double)strlen({val}))', 'double'
-            if typ=='list': return f'((double){val}->len)', 'double'
+            if typ in ('list','strlist'): return f'((double){val}->len)', 'double'
+            return '0', 'double'
+        if name == 'sum':
+            val,typ=args_eval[0]
+            if typ in ('list','strlist'): return f'kuda_list_sum({val})', 'double'
             return '0', 'double'
         if name == 'cut':
             s,_=args_eval[0]

@@ -1,4 +1,4 @@
-# Kuda v0.2.4 - C Code Generator with Full Builtins Support
+# Kuda v0.2.5 - C Code Generator with Full Builtins Support
 from parser import *
 import math
 
@@ -222,7 +222,7 @@ class CGenerator:
 
     def _runtime(self):
         return [
-            '/* Kuda v0.2.4 Runtime - Full Featured */',
+            '/* Kuda v0.2.5 Runtime - Full Featured */',
             '#define MAX_STR  4096',
             '#define MAX_MAT  512',
             '#define MAX_LIST 1024',

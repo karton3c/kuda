@@ -1,4 +1,4 @@
-# Kuda v0.2.4 - Python Bridge
+# Kuda v0.2.5 - Python Bridge
 # Handles 'kuda py file.kuda' mode
 # Lets Kuda code use Python libraries like numpy, pandas, etc.
 

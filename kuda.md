@@ -1,5 +1,5 @@
 # Kuda Language Reference
-**Version 0.2.4**
+**Version 0.2.5**
 
 Kuda is my own programming language with Python-like syntax that compiles to C for fast execution. This document covers everything you need to write Kuda programs.
 
@@ -818,4 +818,4 @@ mat_print(output)
 
 ---
 
-*Kuda v0.2.4 — open source, contributions welcome!*
+*Kuda v0.2.5 — open source, contributions welcome!*

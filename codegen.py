@@ -869,9 +869,12 @@ class CGenerator:
         elif isinstance(node, IndexAssignNode):
             obj, otyp = self._gen_expr(node.target.obj)
             idx, _ = self._gen_expr(node.target.index)
-            val, _ = self._gen_expr(node.value)
-            if otyp == 'list':
-                self.emit(f'{obj}->data[(int)({idx})] = {val};')
+            val, vtyp = self._gen_expr(node.value)
+            if otyp in ('list', 'strlist'):
+                if vtyp == 'str':
+                    self.emit(f'{obj}->data[(int)({idx})] = (double)(intptr_t)({val});')
+                else:
+                    self.emit(f'{obj}->data[(int)({idx})] = {val};')
             else:
                 self.emit(f'{obj}[(int)({idx})] = {val};')
         elif isinstance(node, OutNode): self._gen_out(node)
@@ -978,7 +981,16 @@ class CGenerator:
 
         # each x in lista — iteracja po KList
         iterable, ityp = self._gen_expr(node.iterable)
-        if ityp == 'list':
+        if ityp == 'strlist':
+            tmp_i = self.fresh_tmp()
+            self.vars[node.var] = 'str'
+            self.emit(f'for (int {tmp_i} = 0; {tmp_i} < {iterable}->len; {tmp_i}++) {{')
+            self.indent += 1
+            self.emit(f'char* {node.var} = (char*)(intptr_t){iterable}->data[{tmp_i}];')
+            for s in node.body: self._gen_stmt(s)
+            self.indent -= 1
+            self.emit('}')
+        elif ityp == 'list':
             tmp_i = self.fresh_tmp()
             self.vars[node.var] = 'double'
             self.emit(f'for (int {tmp_i} = 0; {tmp_i} < {iterable}->len; {tmp_i}++) {{')

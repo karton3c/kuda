@@ -133,6 +133,8 @@ class CGenerator:
                     var_types[v] = 'str'
                 elif is_str_expr(node.value):
                     var_types[v] = 'str'
+                elif isinstance(node.value, ListNode):
+                    var_types[v] = 'list'
                 elif isinstance(node.value, CallNode) and isinstance(node.value.func, IdentNode):
                     fname = node.value.func.name
                     if fname in self.models:
@@ -856,6 +858,11 @@ class CGenerator:
     def _gen_stmt(self, node):
         if node is None: return
         if isinstance(node, AssignNode): self._gen_assign(node)
+        elif isinstance(node, AugAssignNode):
+            val, _ = self._gen_expr(node.value)
+            op_map = {'+': '+=', '-': '-=', '*': '*=', '/': '/='}
+            cop = op_map.get(node.op, node.op)
+            self.emit(f'{node.name} {cop} {val};')
         elif isinstance(node, IndexAssignNode):
             obj, otyp = self._gen_expr(node.target.obj)
             idx, _ = self._gen_expr(node.target.index)

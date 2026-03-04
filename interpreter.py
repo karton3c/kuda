@@ -171,6 +171,38 @@ class Interpreter:
         env.set('read',  lambda args: open(args[0], 'r', encoding='utf-8').read())
         env.set('write', lambda args: open(args[0], 'w', encoding='utf-8').write(args[1]))
 
+        # AI - funkcje aktywacji (skalarne, dla list)
+        env.set('sigmoid',  lambda args: 1.0 / (1.0 + math.exp(-args[0])))
+        env.set('sigmoid_d',lambda args: args[0] * (1.0 - args[0]))
+        env.set('tanh',     lambda args: math.tanh(args[0]))
+        env.set('tanh_d',   lambda args: 1.0 - args[0] * args[0])
+        env.set('relu',     lambda args: max(0.0, args[0]))
+        env.set('relu_d',   lambda args: 1.0 if args[0] > 0.0 else 0.0)
+        env.set('leaky',    lambda args: args[0] if args[0] > 0.0 else 0.01 * args[0])
+        env.set('leaky_d',  lambda args: 1.0 if args[0] > 0.0 else 0.01)
+        env.set('softmax',  lambda args: (lambda lst: (lambda s: [math.exp(x)/s for x in lst])(sum(math.exp(x) for x in lst)))(args[0]))
+
+        # AI - operacje na listach
+        env.set('dot',      lambda args: sum(a*b for a,b in zip(args[0], args[1])))
+        env.set('argmax',   lambda args: args[0].index(max(args[0])))
+        env.set('argmin',   lambda args: args[0].index(min(args[0])))
+        env.set('clip',     lambda args: max(args[1], min(args[2], args[0])))
+        env.set('mean',     lambda args: sum(args[0]) / len(args[0]))
+        env.set('norm',     lambda args: math.sqrt(sum(x*x for x in args[0])))
+
+        # AI - zapis/odczyt wag
+        def _save_weights(args):
+            import json
+            path, *lists = args
+            data = [[float(x) for x in lst] for lst in lists]
+            open(path, 'w').write(json.dumps(data))
+        def _load_weights(args):
+            import json
+            data = json.loads(open(args[0]).read())
+            return data  # lista list
+        env.set('save_weights', _save_weights)
+        env.set('load_weights', _load_weights)
+
         # Time
         env.set('wait',  lambda args: _time.sleep(args[0]))
         env.set('time',  lambda args: _time.time())

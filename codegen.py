@@ -414,6 +414,24 @@ class CGenerator:
             '        l->data[j] = tmp;',
             '    }',
             '}',
+            '/* AI - activation functions */',
+            'double kuda_sigmoid(double x){return 1.0/(1.0+exp(-x));}',
+            'double kuda_sigmoid_d(double x){return x*(1.0-x);}',
+            'double kuda_tanh_act(double x){return tanh(x);}',
+            'double kuda_tanh_d(double x){return 1.0-x*x;}',
+            'double kuda_relu(double x){return x>0.0?x:0.0;}',
+            'double kuda_relu_d(double x){return x>0.0?1.0:0.0;}',
+            'double kuda_leaky(double x){return x>0.0?x:0.01*x;}',
+            'double kuda_leaky_d(double x){return x>0.0?1.0:0.01;}',
+            'double kuda_clip(double x,double lo,double hi){return x<lo?lo:(x>hi?hi:x);}',
+            '/* AI - list operations */',
+            'double kuda_dot(KList* a,KList* b){double s=0;int n=a->len<b->len?a->len:b->len;for(int i=0;i<n;i++)s+=a->data[i]*b->data[i];return s;}',
+            'double kuda_argmax(KList* l){int idx=0;for(int i=1;i<l->len;i++)if(l->data[i]>l->data[idx])idx=i;return (double)idx;}',
+            'double kuda_argmin(KList* l){int idx=0;for(int i=1;i<l->len;i++)if(l->data[i]<l->data[idx])idx=i;return (double)idx;}',
+            'double kuda_mean(KList* l){double s=0;for(int i=0;i<l->len;i++)s+=l->data[i];return s/l->len;}',
+            'double kuda_norm(KList* l){double s=0;for(int i=0;i<l->len;i++)s+=l->data[i]*l->data[i];return sqrt(s);}',
+            'KList* kuda_softmax(KList* l){KList* r=kuda_list_new();double s=0;for(int i=0;i<l->len;i++)s+=exp(l->data[i]);for(int i=0;i<l->len;i++)kuda_list_add(r,exp(l->data[i])/s);return r;}',
+            '',
             'char* kuda_input(const char* p){',
             '    printf("%s",p); char* b=malloc(MAX_STR);',
             '    if(!fgets(b,MAX_STR,stdin)) b[0]=0;',
@@ -475,11 +493,9 @@ class CGenerator:
             '}',
             'double kuda_mat_sum(KMatrix* A){double s=0;for(int i=0;i<A->rows;i++) for(int j=0;j<A->cols;j++) s+=A->data[i][j];return s;}',
             'double kuda_mat_mean(KMatrix* A){return kuda_mat_sum(A)/(A->rows*A->cols);}',
-            'double kuda_dot(KMatrix* A,KMatrix* B){double s=0;for(int i=0;i<A->rows;i++) for(int j=0;j<A->cols;j++) s+=A->data[i][j]*B->data[i][j];return s;}',
+            'double kuda_mat_dot(KMatrix* A,KMatrix* B){double s=0;for(int i=0;i<A->rows;i++) for(int j=0;j<A->cols;j++) s+=A->data[i][j]*B->data[i][j];return s;}',
             '',
-            '/* Activation functions */',
-            'double kuda_sigmoid(double x){return 1.0/(1.0+exp(-x));}',
-            'double kuda_relu(double x){return x>0?x:0;}',
+            '/* Matrix activation functions (use scalar ones defined earlier) */',
             'KMatrix* kuda_mat_sigmoid(KMatrix* A){',
             '    KMatrix* C=kuda_mat_new(A->rows,A->cols);',
             '    for(int i=0;i<A->rows;i++) for(int j=0;j<A->cols;j++) C->data[i][j]=kuda_sigmoid(A->data[i][j]);',
@@ -1187,6 +1203,23 @@ class CGenerator:
         if name == 'pot':   b,_ = args_eval[0]; e,_ = args_eval[1]; return f'pow({b},{e})', 'double'
         if name == 'max' and len(args_eval)==2: a,_=args_eval[0];b,_=args_eval[1]; return f'fmax({a},{b})', 'double'
         if name == 'min' and len(args_eval)==2: a,_=args_eval[0];b,_=args_eval[1]; return f'fmin({a},{b})', 'double'
+        # AI - activation functions
+        if name == 'sigmoid':  val,_=args_eval[0]; return f'kuda_sigmoid({val})', 'double'
+        if name == 'sigmoid_d':val,_=args_eval[0]; return f'kuda_sigmoid_d({val})', 'double'
+        if name == 'tanh':     val,_=args_eval[0]; return f'kuda_tanh_act({val})', 'double'
+        if name == 'tanh_d':   val,_=args_eval[0]; return f'kuda_tanh_d({val})', 'double'
+        if name == 'relu':     val,_=args_eval[0]; return f'kuda_relu({val})', 'double'
+        if name == 'relu_d':   val,_=args_eval[0]; return f'kuda_relu_d({val})', 'double'
+        if name == 'leaky':    val,_=args_eval[0]; return f'kuda_leaky({val})', 'double'
+        if name == 'leaky_d':  val,_=args_eval[0]; return f'kuda_leaky_d({val})', 'double'
+        if name == 'clip':     val,_=args_eval[0];lo,_=args_eval[1];hi,_=args_eval[2]; return f'kuda_clip({val},{lo},{hi})', 'double'
+        # AI - list operations
+        if name == 'dot':      a,_=args_eval[0];b,_=args_eval[1]; return f'kuda_dot({a},{b})', 'double'
+        if name == 'argmax':   val,_=args_eval[0]; return f'kuda_argmax({val})', 'double'
+        if name == 'argmin':   val,_=args_eval[0]; return f'kuda_argmin({val})', 'double'
+        if name == 'mean':     val,_=args_eval[0]; return f'kuda_mean({val})', 'double'
+        if name == 'norm':     val,_=args_eval[0]; return f'kuda_norm({val})', 'double'
+        if name == 'softmax':  val,_=args_eval[0]; return f'kuda_softmax({val})', 'list'
         if name == 'rand':       lo,_=args_eval[0];hi,_=args_eval[1]; return f'((double)kuda_rand((int)({lo}),(int)({hi})))', 'double'
         if name == 'rand_float': return 'kuda_rand_float()', 'double'
         if name == 'rand_normal':

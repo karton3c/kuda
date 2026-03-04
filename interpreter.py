@@ -190,6 +190,35 @@ class Interpreter:
         env.set('mean',     lambda args: sum(args[0]) / len(args[0]))
         env.set('norm',     lambda args: math.sqrt(sum(x*x for x in args[0])))
 
+        # AI - inicjalizacja wag
+        env.set('xav',  lambda args: [random.gauss(0, (2.0/(args[0]+args[1]))**0.5) for _ in range(int(args[0]*args[1]))])
+        env.set('he',   lambda args: [random.gauss(0, (2.0/args[0])**0.5) for _ in range(int(args[0]))])
+
+        # AI - metryki
+        def _acc(args):
+            pred, target = args[0], args[1]
+            correct = sum(1 for p,t in zip(pred,target) if round(p)==round(t))
+            return correct / len(target)
+        env.set('acc', _acc)
+
+        def _crent(args):
+            pred, target = args[0], args[1]
+            eps = 1e-15
+            return -sum(t * math.log(max(p, eps)) for p,t in zip(pred,target)) / len(target)
+        env.set('crent', _crent)
+
+        # AI - wycinek listy
+        def _snip(args):
+            lst, start, end = args[0], int(args[1]), int(args[2])
+            return lst[start:end]
+        env.set('snip', _snip)
+
+        # AI - batch/pack
+        def _pack(args):
+            lst, n = args[0], int(args[1])
+            return [lst[i:i+n] for i in range(0, len(lst), n)]
+        env.set('pack', _pack)
+
         # AI - zapis/odczyt wag
         def _save_weights(args):
             import json

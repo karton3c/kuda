@@ -113,6 +113,7 @@ class CGenerator:
         code generation so we know types of every variable everywhere.
         """
         STR_FUNCS = {'input', 'str', 'caps', 'small', 'trim', 'swap', 'merge', 'read'}
+        LIST_FUNCS = {'cut', 'softmax', 'xav', 'he', 'snip', 'pack', 'shuffle'}
 
         def is_str_expr(node):
             if isinstance(node, StringNode): return True
@@ -147,6 +148,8 @@ class CGenerator:
                         var_types[v] = self.func_return_types[fname]
                     elif fname in STR_FUNCS or self.func_return_types.get(fname) == 'str':
                         var_types[v] = 'str'
+                    elif fname in LIST_FUNCS or self.func_return_types.get(fname) == 'list':
+                        var_types[v] = 'list'
                     else:
                         var_types.setdefault(v, 'double')
                 else:
@@ -167,6 +170,7 @@ class CGenerator:
     def _scan_call_sites(self, stmts):
         """Scan all statements to find how functions are called and what types they receive."""
         STR_FUNCS = {'input', 'str', 'caps', 'small', 'trim', 'swap', 'merge', 'read'}
+        LIST_FUNCS = {'cut', 'softmax', 'xav', 'he', 'snip', 'pack', 'shuffle'}
 
         def is_str_expr(arg):
             if isinstance(arg, StringNode): return True
@@ -431,6 +435,14 @@ class CGenerator:
             'double kuda_mean(KList* l){double s=0;for(int i=0;i<l->len;i++)s+=l->data[i];return s/l->len;}',
             'double kuda_norm(KList* l){double s=0;for(int i=0;i<l->len;i++)s+=l->data[i]*l->data[i];return sqrt(s);}',
             'KList* kuda_softmax(KList* l){KList* r=kuda_list_new();double s=0;for(int i=0;i<l->len;i++)s+=exp(l->data[i]);for(int i=0;i<l->len;i++)kuda_list_add(r,exp(l->data[i])/s);return r;}',
+            '/* AI - weight init */',
+            'KList* kuda_xav(int n_in,int n_out){KList* r=kuda_list_new();double std=sqrt(2.0/(n_in+n_out));for(int i=0;i<n_in*n_out;i++){double u1=(double)(rand()+1)/(RAND_MAX+1.0),u2=(double)(rand()+1)/(RAND_MAX+1.0);kuda_list_add(r,std*sqrt(-2.0*log(u1))*cos(2.0*3.14159265*u2));}return r;}',
+            'KList* kuda_he(int n_in){KList* r=kuda_list_new();double std=sqrt(2.0/n_in);for(int i=0;i<n_in;i++){double u1=(double)(rand()+1)/(RAND_MAX+1.0),u2=(double)(rand()+1)/(RAND_MAX+1.0);kuda_list_add(r,std*sqrt(-2.0*log(u1))*cos(2.0*3.14159265*u2));}return r;}',
+            '/* AI - metrics */',
+            'double kuda_acc(KList* pred,KList* target){int c=0;for(int i=0;i<target->len;i++)if((int)round(pred->data[i])==(int)round(target->data[i]))c++;return (double)c/target->len;}',
+            'double kuda_crent(KList* pred,KList* target){double s=0;for(int i=0;i<target->len;i++){double p=pred->data[i]<1e-15?1e-15:pred->data[i];s+=target->data[i]*log(p);}return -s/target->len;}',
+            '/* AI - list ops */',
+            'KList* kuda_snip(KList* l,int start,int end){KList* r=kuda_list_new();for(int i=start;i<end&&i<l->len;i++)kuda_list_add(r,l->data[i]);return r;}',
             '',
             'char* kuda_input(const char* p){',
             '    printf("%s",p); char* b=malloc(MAX_STR);',
@@ -759,6 +771,7 @@ class CGenerator:
         """
         found = {}
         STR_FUNCS = {'input', 'str', 'caps', 'small', 'trim', 'swap', 'merge', 'read', 'kuda_concat'}
+        LIST_FUNCS2 = {'cut', 'softmax', 'xav', 'he', 'snip', 'pack', 'shuffle'}
 
         def is_str_expr(node):
             """Rekurencyjnie sprawdź czy wyrażenie zwraca string."""
@@ -798,6 +811,8 @@ class CGenerator:
                                 elif fname in getattr(self, 'func_return_types', {}):
                                     ret = self.func_return_types[fname]
                                     found[node.name] = ret if ret != 'double' else 'double'
+                                elif fname in LIST_FUNCS2:
+                                    found[node.name] = 'list'
                                 else:
                                     found.setdefault(node.name, 'double')
                             else:
@@ -1220,6 +1235,11 @@ class CGenerator:
         if name == 'mean':     val,_=args_eval[0]; return f'kuda_mean({val})', 'double'
         if name == 'norm':     val,_=args_eval[0]; return f'kuda_norm({val})', 'double'
         if name == 'softmax':  val,_=args_eval[0]; return f'kuda_softmax({val})', 'list'
+        if name == 'xav':      a,_=args_eval[0];b,_=args_eval[1]; return f'kuda_xav((int)({a}),(int)({b}))', 'list'
+        if name == 'he':       a,_=args_eval[0]; return f'kuda_he((int)({a}))', 'list'
+        if name == 'acc':      a,_=args_eval[0];b,_=args_eval[1]; return f'kuda_acc({a},{b})', 'double'
+        if name == 'crent':    a,_=args_eval[0];b,_=args_eval[1]; return f'kuda_crent({a},{b})', 'double'
+        if name == 'snip':     l,_=args_eval[0];s,_=args_eval[1];e,_=args_eval[2]; return f'kuda_snip({l},(int)({s}),(int)({e}))', 'list'
         if name == 'rand':       lo,_=args_eval[0];hi,_=args_eval[1]; return f'((double)kuda_rand((int)({lo}),(int)({hi})))', 'double'
         if name == 'rand_float': return 'kuda_rand_float()', 'double'
         if name == 'rand_normal':

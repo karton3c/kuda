@@ -133,10 +133,12 @@ class CGenerator:
                     var_types[v] = 'str'
                 elif is_str_expr(node.value):
                     var_types[v] = 'str'
-                elif isinstance(node.value, ListNode):
-                    # Check if list contains strings
-                    has_str = any(isinstance(e, StringNode) for e in node.value.elements)
-                    var_types[v] = 'strlist' if has_str else 'list'
+                elif isinstance(node.value, (ListNode, ListCompNode)):
+                    if isinstance(node.value, ListNode):
+                        has_str = any(isinstance(e, StringNode) for e in node.value.elements)
+                        var_types[v] = 'strlist' if has_str else 'list'
+                    else:
+                        var_types[v] = 'list'
                 elif isinstance(node.value, CallNode) and isinstance(node.value.func, IdentNode):
                     fname = node.value.func.name
                     if fname in self.models:
@@ -764,9 +766,12 @@ class CGenerator:
                             found[node.name] = 'str'
                         elif isinstance(node.value, BoolNode):
                             found[node.name] = 'bool'
-                        elif isinstance(node.value, ListNode):
-                            has_str = any(isinstance(e, StringNode) for e in node.value.elements)
-                            found[node.name] = 'strlist' if has_str else 'list'
+                        elif isinstance(node.value, (ListNode, ListCompNode)):
+                            if isinstance(node.value, ListNode):
+                                has_str = any(isinstance(e, StringNode) for e in node.value.elements)
+                                found[node.name] = 'strlist' if has_str else 'list'
+                            else:
+                                found[node.name] = 'list'
                         elif is_str_expr(node.value):
                             found[node.name] = 'str'
                         elif isinstance(node.value, CallNode):
@@ -1032,6 +1037,35 @@ class CGenerator:
             return f'"{e}"', 'str'
         if isinstance(node, BoolNode): return ('1' if node.value else '0'), 'bool'
         if isinstance(node, NoneNode): return '0', 'double'
+        if isinstance(node, ListCompNode):
+            # [expr each var in iterable]
+            tmp = self.fresh_tmp()
+            self.emit(f'KList* {tmp} = kuda_list_new();')
+            # Save and set loop var type
+            old_typ = self.vars.get(node.var)
+            self.vars[node.var] = 'double'
+            iterable, ityp = self._gen_expr(node.iterable)
+            if isinstance(node.iterable, CallNode) and isinstance(node.iterable.func, IdentNode) and node.iterable.func.name == 'range':
+                args = node.iterable.args
+                if len(args) == 1:
+                    end, _ = self._gen_expr(args[0])
+                    self.emit(f'for (double {node.var} = 0; {node.var} < {end}; {node.var}++) {{')
+                else:
+                    start, _ = self._gen_expr(args[0]); end, _ = self._gen_expr(args[1])
+                    self.emit(f'for (double {node.var} = {start}; {node.var} < {end}; {node.var}++) {{')
+            else:
+                tmp_i = self.fresh_tmp()
+                self.emit(f'for (int {tmp_i} = 0; {tmp_i} < {iterable}->len; {tmp_i}++) {{')
+                self.emit(f'    double {node.var} = {iterable}->data[{tmp_i}];')
+            self.indent += 1
+            val, _ = self._gen_expr(node.expr)
+            self.emit(f'kuda_list_add({tmp}, {val});')
+            self.indent -= 1
+            self.emit('}')
+            if old_typ is None: self.vars.pop(node.var, None)
+            else: self.vars[node.var] = old_typ
+            return tmp, 'list'
+
         if isinstance(node, ListNode):
             # Create a new list and add all elements
             tmp = self.fresh_tmp()

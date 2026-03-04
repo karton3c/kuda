@@ -130,14 +130,14 @@ class Interpreter:
         env.set('range', lambda args: list(range(*[int(a) for a in args])))
         env.set('int',   lambda args: int(args[0]))
         env.set('float', lambda args: float(args[0]))
-        env.set('str',   lambda args: str(args[0]))
+        env.set('str',   lambda args: (str(int(args[0])) if isinstance(args[0], float) and args[0] == int(args[0]) and abs(args[0]) < 1e15 else str(args[0])))
         env.set('type',  lambda args: type(args[0]).__name__)
         env.set('input', lambda args: input(args[0] if args else ''))
         env.set('abs',   lambda args: abs(args[0]))
         env.set('max',   lambda args: max(args) if len(args) > 1 else max(args[0]))
         env.set('min',   lambda args: min(args) if len(args) > 1 else min(args[0]))
         env.set('sum',   lambda args: sum(args[0]))
-        env.set('round', lambda args: round(args[0], int(args[1]) if len(args) > 1 else 0))
+        env.set('round', lambda args: (lambda r: float(int(r)) if r == int(r) else r)(round(args[0], int(args[1])) if len(args) > 1 else float(round(args[0]))))
         env.set('rand',        lambda args: random.randint(int(args[0]), int(args[1])))
         env.set('rand_float',  lambda args: random.random())
         env.set('rand_normal', lambda args: random.gauss(args[0], args[1]))
@@ -291,7 +291,8 @@ class Interpreter:
     def exec_assign(self, node, env):
         value = self.eval(node.value, env)
         if isinstance(node.name, str):
-            env.set_or_assign(node.name, value)
+            # Zawsze przypisuj lokalnie — nie wyciekaj do zewnętrznego scope
+            env.set(node.name, value)
         elif isinstance(node.name, AttrNode):
             # np. self.x = 5
             obj = self.eval(node.name.obj, env)
@@ -584,6 +585,8 @@ class Interpreter:
             return 'None'
         if isinstance(val, bool):
             return 'True' if val else 'False'
+        if isinstance(val, float) and val == int(val) and abs(val) < 1e15:
+            return str(int(val))
         if isinstance(val, list):
             return '[' + ', '.join(self._to_str(v) for v in val) + ']'
         return str(val)

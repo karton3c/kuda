@@ -211,7 +211,7 @@ class Parser:
         if tok.type == 'model':
             return self.parse_model()
 
-        if tok.type == 'give':
+        if tok.type in ('give', 'return'):
             return self.parse_give()
 
         if tok.type == 'try':

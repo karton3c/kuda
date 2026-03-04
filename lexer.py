@@ -30,6 +30,7 @@ TT_MUL_EQ    = 'MUL_EQ'
 TT_DIV_EQ    = 'DIV_EQ'
 TT_COMMA     = 'COMMA'
 TT_DOT       = 'DOT'
+TT_TILDE     = 'TILDE'
 TT_NEWLINE   = 'NEWLINE'
 TT_INDENT    = 'INDENT'
 TT_DEDENT    = 'DEDENT'
@@ -48,6 +49,7 @@ KEYWORDS = {
     'True', 'False', 'None',
     # Note: 'self' is intentionally NOT a keyword - it should be a regular identifier
     'break', 'continue',
+    'net',
 }
 
 class Token:
@@ -280,5 +282,7 @@ class Lexer:
             self.tokens.append(Token(TT_COMMA, ',', line))
         elif ch == '.':
             self.tokens.append(Token(TT_DOT, '.', line))
+        elif ch == '~':
+            self.tokens.append(Token(TT_TILDE, '~', line))
         else:
             raise LexerError(f"Unknown character: '{ch}'", line)

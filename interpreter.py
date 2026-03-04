@@ -49,6 +49,32 @@ class Environment:
 
 # === Klasy Kuda ===
 
+class KudaNet:
+    """Wbudowana sieć neuronowa Kuda."""
+    def __init__(self, name, params):
+        self.name = name
+        self.params = params  # dict: key -> wartość
+        self.weights = []     # lista list wag
+        self.biases = []      # lista list biasów
+        self.trained = False
+
+    def get_attr(self, name):
+        if name == 'train':
+            return BoundNetMethod(self, 'train')
+        if name == 'predict':
+            return BoundNetMethod(self, 'predict')
+        if name == 'loss':
+            return BoundNetMethod(self, 'loss')
+        raise AttributeError(f"Net '{self.name}' has no attribute '{name}'")
+
+    def __repr__(self):
+        return f'<net {self.name}>'
+
+class BoundNetMethod:
+    def __init__(self, net, method):
+        self.net = net
+        self.method = method
+
 class KudaFunction:
     def __init__(self, name, params, body, env):
         self.name = name
@@ -238,6 +264,7 @@ class Interpreter:
 
         # DataBuilder
         env.set('data', DataBuilder())
+        env.set('auto', None)  # special value for net ~layers
 
         # Matrix i ML
         env.set('Matrix', lambda args: np.random.randn(int(args[0]), int(args[1])) * 0.1 if len(args)==2 else np.zeros((int(args[0]), int(args[1]))))
@@ -321,6 +348,8 @@ class Interpreter:
         # model
         if isinstance(node, ModelNode):
             return self.exec_model(node, env)
+        if isinstance(node, NetNode):
+            return self.exec_net(node, env)
 
         # give
         if isinstance(node, GiveNode):
@@ -415,6 +444,177 @@ class Interpreter:
                 break
             except ContinueSignal:
                 continue
+
+    def exec_net(self, node, env):
+        import math, random as _random
+        # Ewaluuj parametry
+        params = {}
+        for key, val_node in node.params.items():
+            try:
+                params[key] = self.eval(val_node, env)
+            except Exception:
+                # Może być 'auto' lub inna specjalna wartość
+                params[key] = None
+
+        net = KudaNet(node.name, params)
+
+        # Pobierz dane
+        raw_data = None
+        if 'data' in params:
+            raw_data = params['data']
+        elif 'inputs' in params and 'targets' in params:
+            raw_data = list(zip(params['inputs'], params['targets']))
+
+        if raw_data is None:
+            raise RuntimeError_("net: brak danych (~data lub ~inputs + ~targets)")
+
+        # Normalizuj format danych -> lista (inputs, target)
+        dataset = []
+        for item in raw_data:
+            if isinstance(item, (list, tuple)) and len(item) == 2:
+                inp, tgt = item
+                if not isinstance(inp, list): inp = [inp]
+                if not isinstance(tgt, list): tgt = [tgt]
+                dataset.append((inp, tgt))
+
+        # Parametry sieci
+        n_inputs = len(dataset[0][0]) if dataset else 1
+        layers_raw = params.get('layers', [n_inputs, 8, 1])
+        layers = []
+        for l in layers_raw:
+            if isinstance(l, str) and l == 'auto':
+                layers.append(n_inputs)
+            elif l is None:
+                layers.append(n_inputs)
+            else:
+                layers.append(int(l))
+        if layers[0] != n_inputs:
+            layers[0] = n_inputs  # auto-fix
+
+        lr        = float(params.get('lr', 0.01))
+        epochs    = int(params.get('epochs', 1000))
+        act_name  = params.get('act', 'tanh')
+        out_name  = params.get('act_out', act_name)
+        loss_name = params.get('loss', 'mse')
+        init_name = params.get('init', 'xav')
+        pack_size = params.get('pack', None)
+        log_every = int(params.get('log', 100))
+        stop_loss = float(params.get('stop', -1.0))
+
+        # Funkcje aktywacji
+        def get_act(name):
+            if name == 'tanh':     return math.tanh, lambda x: 1.0 - x*x
+            if name == 'sigmoid':  return (lambda x: 1/(1+math.exp(-x))), lambda x: x*(1-x)
+            if name == 'relu':     return (lambda x: max(0.0,x)), lambda x: 1.0 if x>0 else 0.0
+            if name == 'leaky':    return (lambda x: x if x>0 else 0.01*x), lambda x: 1.0 if x>0 else 0.01
+            if name == 'linear':   return (lambda x: x), lambda x: 1.0
+            return math.tanh, lambda x: 1.0 - x*x
+
+        act_f, act_d = get_act(act_name)
+        out_f, out_d = get_act(out_name)
+
+        # Inicjalizacja wag
+        def init_weights(n_in, n_out, method):
+            if method == 'he':
+                std = math.sqrt(2.0/n_in)
+            else:  # xav
+                std = math.sqrt(2.0/(n_in+n_out))
+            return [_random.gauss(0, std) for _ in range(n_in*n_out)]
+
+        net.weights = []
+        net.biases  = []
+        for i in range(len(layers)-1):
+            net.weights.append(init_weights(layers[i], layers[i+1], init_name))
+            net.biases.append([0.0]*layers[i+1])
+
+        # Forward pass
+        def forward(inputs):
+            a = inputs[:]
+            activations = [a]
+            for li in range(len(net.weights)):
+                n_in  = layers[li]
+                n_out = layers[li+1]
+                w = net.weights[li]
+                b = net.biases[li]
+                is_last = (li == len(net.weights)-1)
+                f = out_f if is_last else act_f
+                new_a = []
+                for j in range(n_out):
+                    z = b[j]
+                    for k in range(n_in):
+                        z += a[k] * w[j*n_in+k]
+                    new_a.append(f(z))
+                a = new_a
+                activations.append(a)
+            return activations
+
+        # Backward pass
+        def backward(activations, target):
+            n_layers = len(layers)
+            deltas = [None] * (n_layers-1)
+            # Output layer delta
+            li = n_layers-2
+            is_last = True
+            f_d = out_d
+            out_a = activations[-1]
+            deltas[li] = [(out_a[j]-target[j]) * f_d(out_a[j]) for j in range(len(out_a))]
+            # Hidden layers
+            for li in range(n_layers-3, -1, -1):
+                n_in  = layers[li+1]
+                n_out_next = layers[li+2]
+                w_next = net.weights[li+1]
+                a = activations[li+1]
+                d_next = deltas[li+1]
+                d = []
+                for j in range(n_in):
+                    err = sum(d_next[k]*w_next[k*n_in+j] for k in range(n_out_next))
+                    d.append(err * act_d(a[j]))
+                deltas[li] = d
+            return deltas
+
+        # Update weights
+        def update(activations, deltas):
+            for li in range(len(net.weights)):
+                n_in  = layers[li]
+                n_out = layers[li+1]
+                d = deltas[li]
+                a_in = activations[li]
+                for j in range(n_out):
+                    net.biases[li][j]  -= lr * d[j]
+                    for k in range(n_in):
+                        net.weights[li][j*n_in+k] -= lr * d[j] * a_in[k]
+
+        # Trening
+        data_list = dataset[:]
+        for epoch in range(epochs):
+            _random.shuffle(data_list)
+            batches = [data_list]
+            if pack_size:
+                ps = int(pack_size)
+                batches = [data_list[i:i+ps] for i in range(0, len(data_list), ps)]
+
+            total_loss = 0.0
+            for batch in batches:
+                for inputs, target in batch:
+                    acts = forward(inputs)
+                    out_a = acts[-1]
+                    total_loss += sum((o-t)**2 for o,t in zip(out_a,target)) / len(target)
+                    deltas = backward(acts, target)
+                    update(acts, deltas)
+
+            avg_loss = total_loss / len(data_list)
+            if log_every > 0 and epoch % log_every == 0:
+                print(f"Epoch {epoch} | Loss: {round(avg_loss, 6)}")
+            if stop_loss > 0 and avg_loss < stop_loss:
+                print(f"Early stop epoch {epoch} | Loss: {round(avg_loss, 6)}")
+                break
+
+        net.trained = True
+        net._forward = forward
+        net._layers  = layers
+
+        # Zarejestruj net w env
+        env.set(node.name, net)
 
     def exec_model(self, node, env):
         model_env = Environment(env)
@@ -586,6 +786,22 @@ class Interpreter:
                 if isinstance(method, BoundMethod):
                     return self._call_function(method.func, [method.instance] + args)
 
+            # KudaNet
+            if isinstance(obj, KudaNet):
+                method = obj.get_attr(method_name)
+                if isinstance(method, BoundNetMethod):
+                    net = method.net
+                    if method.method == 'predict':
+                        if not net.trained:
+                            raise RuntimeError_(f"Net '{net.name}' nie jest wytrenowana!")
+                        inputs = args[0] if args else []
+                        if not isinstance(inputs, list): inputs = [inputs]
+                        acts = net._forward(inputs)
+                        result = acts[-1]
+                        return result[0] if len(result) == 1 else result
+                    return None
+                return method
+
             # Python module wrapper (from python_bridge.py)
             if hasattr(obj, 'get_attr'):
                 method = obj.get_attr(method_name)
@@ -608,6 +824,24 @@ class Interpreter:
         # Metoda przypisaon do instancji
         if isinstance(func, BoundMethod):
             return self._call_function(func.func, [func.instance] + args)
+
+        # Metoda sieci neuronowej
+        if isinstance(func, BoundNetMethod):
+            net = func.net
+            if func.method == 'train':
+                # trening już wykonany w exec_net, tu nic nie robimy
+                return None
+            if func.method == 'predict':
+                if not net.trained:
+                    raise RuntimeError_(f"Net '{net.name}' nie jest wytrenowana!")
+                inputs = args[0] if args else []
+                if not isinstance(inputs, list): inputs = [inputs]
+                acts = net._forward(inputs)
+                result = acts[-1]
+                return result[0] if len(result) == 1 else result
+            if func.method == 'loss':
+                return None
+            return None
 
         # Funkcja Kuda
         if isinstance(func, KudaFunction):

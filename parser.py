@@ -79,6 +79,10 @@ class GiveNode:
 class ModelNode:
     def __init__(self, name, body): self.name = name; self.body = body
 
+class NetNode:
+    def __init__(self, name, params): self.name = name; self.params = params
+    # params = dict of ~key -> value node
+
 class UseNode:
     def __init__(self, module, alias=None):
         self.module = module
@@ -210,6 +214,8 @@ class Parser:
 
         if tok.type == 'model':
             return self.parse_model()
+        if tok.type == 'net':
+            return self.parse_net()
 
         if tok.type in ('give', 'return'):
             return self.parse_give()
@@ -343,6 +349,32 @@ class Parser:
         self._end_statement()
         body = self.parse_block()
         return ModelNode(name, body)
+
+    def parse_net(self):
+        self.advance()  # 'net'
+        name = self.expect(TT_IDENT).value
+        self.expect(TT_COLON)
+        self._end_statement()
+        # Parse body - only ~key = value lines
+        self.expect(TT_INDENT)
+        params = {}
+        while self.current().type not in (TT_DEDENT, TT_EOF):
+            self.skip_newlines()
+            if self.current().type == TT_DEDENT:
+                break
+            # Expect ~ key = value
+            if self.current().type == TT_TILDE:
+                self.advance()  # ~
+                key = self.expect(TT_IDENT).value
+                self.expect(TT_ASSIGN)
+                value = self.parse_expr()
+                params[key] = value
+                self._end_statement()
+            else:
+                self._end_statement()
+        if self.current().type == TT_DEDENT:
+            self.advance()
+        return NetNode(name, params)
 
     def parse_give(self):
         self.advance()  # 'give'

@@ -304,12 +304,10 @@ class Interpreter:
     def exec_if(self, node, env):
         for cond, body in node.cases:
             if self.eval(cond, env):
-                child_env = Environment(env)
-                self.exec_block(body, child_env)
+                self.exec_block(body, env)
                 return
         if node.else_body:
-            child_env = Environment(env)
-            self.exec_block(node.else_body, child_env)
+            self.exec_block(node.else_body, env)
 
     def exec_repeat(self, node, env):
         count = int(self.eval(node.count, env))

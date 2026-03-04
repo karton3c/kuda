@@ -314,9 +314,8 @@ class Interpreter:
     def exec_repeat(self, node, env):
         count = int(self.eval(node.count, env))
         for _ in range(count):
-            child_env = Environment(env)
             try:
-                self.exec_block(node.body, child_env)
+                self.exec_block(node.body, env)
             except BreakSignal:
                 break
             except ContinueSignal:
@@ -325,15 +324,14 @@ class Interpreter:
     def exec_each_unpack(self, node, env):
         iterable = self.eval(node.iterable, env)
         for item in iterable:
-            child_env = Environment(env)
             if len(node.vars) == 2 and isinstance(item, (list, tuple)) and len(item) == 2:
-                child_env.set(node.vars[0], item[0])
-                child_env.set(node.vars[1], item[1])
+                env.set(node.vars[0], item[0])
+                env.set(node.vars[1], item[1])
             else:
                 for i, var in enumerate(node.vars):
-                    child_env.set(var, item[i] if isinstance(item, (list, tuple)) else item)
+                    env.set(var, item[i] if isinstance(item, (list, tuple)) else item)
             try:
-                self.exec_block(node.body, child_env)
+                self.exec_block(node.body, env)
             except BreakSignal:
                 break
             except ContinueSignal:
@@ -342,10 +340,9 @@ class Interpreter:
     def exec_each(self, node, env):
         iterable = self.eval(node.iterable, env)
         for item in iterable:
-            child_env = Environment(env)
-            child_env.set(node.var, item)
+            env.set(node.var, item)
             try:
-                self.exec_block(node.body, child_env)
+                self.exec_block(node.body, env)
             except BreakSignal:
                 break
             except ContinueSignal:
@@ -353,9 +350,8 @@ class Interpreter:
 
     def exec_til(self, node, env):
         while self.eval(node.condition, env):
-            child_env = Environment(env)
             try:
-                self.exec_block(node.body, child_env)
+                self.exec_block(node.body, env)
             except BreakSignal:
                 break
             except ContinueSignal:

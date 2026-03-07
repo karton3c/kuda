@@ -89,6 +89,24 @@ def compile_to_binary(path, output=None, silent=False):
     return output
 
 def run_fast(path):
+    # Sprawdź czy używa DataBuilder — jeśli tak, od razu interpreter
+    try:
+        with open(path) as _f: _src = _f.read()
+        from lexer import Lexer
+        from parser import Parser
+        _tokens = Lexer(_src).tokenize()
+        _ast = Parser(_tokens).parse()
+        from codegen import CGenerator
+        _cg = CGenerator()
+        # Fallback do interpretera tylko jeśli używa DataBuilder bez net
+        from parser import NetNode
+        _has_net = any(isinstance(s, NetNode) for s in _ast.statements)
+        if _cg._uses_data_builder(_ast) and not _has_net:
+            run_interpreted(path)
+            return
+    except Exception:
+        pass
+
     tmp_bin = tempfile.NamedTemporaryFile(delete=False, suffix='')
     tmp_bin.close()
 

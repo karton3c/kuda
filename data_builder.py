@@ -20,23 +20,32 @@ class DataBuilder:
         self._mode      = mode
         self._mode_args = mode_args
         self._n_bits    = n_bits
+        self._cust_fn = None  # user-defined target function
 
     def __call__(self, *args):
         # data.binary(3) — ustaw n_bits
         if self._dtype == 'binary' and self._mode is None:
-            return DataBuilder(dtype='binary', n_bits=int(args[0]))
+            nb = DataBuilder(dtype='binary', n_bits=int(args[0]))
+            nb._cust_fn = self._cust_fn
+            return nb
         # data.binary.random(200) — ustaw liczbę próbek
         if self._dtype == 'binary' and self._mode == 'random' and self._mode_args is None:
-            return DataBuilder(dtype='binary', mode='random',
+            nb = DataBuilder(dtype='binary', mode='random',
                                mode_args=(int(args[0]),), n_bits=self._n_bits)
+            nb._cust_fn = self._cust_fn
+            return nb
         # data.numeric.sequential(start, stop, step)
         if self._dtype == 'numeric' and self._mode == 'sequential':
-            return DataBuilder(dtype='numeric', mode='sequential',
+            nb = DataBuilder(dtype='numeric', mode='sequential',
                                mode_args=(float(args[0]), float(args[1]), float(args[2])))
+            nb._cust_fn = self._cust_fn
+            return nb
         # data.numeric.random(n, min, max)
         if self._dtype == 'numeric' and self._mode == 'random':
-            return DataBuilder(dtype='numeric', mode='random',
+            nb = DataBuilder(dtype='numeric', mode='random',
                                mode_args=(int(args[0]), float(args[1]), float(args[2])))
+            nb._cust_fn = self._cust_fn
+            return nb
         return self
 
     def __getattr__(self, name):
@@ -45,23 +54,38 @@ class DataBuilder:
 
         # Typ danych
         if name == 'binary':
-            return DataBuilder(dtype='binary', n_bits=self._n_bits)
+            nb = DataBuilder(dtype='binary', n_bits=self._n_bits)
+            nb._cust_fn = self._cust_fn
+            return nb
         if name == 'numeric':
-            return DataBuilder(dtype='numeric')
+            nb = DataBuilder(dtype='numeric')
+            nb._cust_fn = self._cust_fn
+            return nb
 
         # Tryb
         if name == 'sequential':
-            return DataBuilder(dtype=self._dtype, mode='sequential',
+            nb = DataBuilder(dtype=self._dtype, mode='sequential',
                                mode_args=self._mode_args, n_bits=self._n_bits)
+            nb._cust_fn = self._cust_fn
+            return nb
         if name == 'random':
-            return DataBuilder(dtype=self._dtype, mode='random',
+            nb = DataBuilder(dtype=self._dtype, mode='random',
                                mode_args=self._mode_args, n_bits=self._n_bits)
+            nb._cust_fn = self._cust_fn
+            return nb
+
+        # cust target
+        if name == 'cust':
+            fn_cust = self._cust_fn
+            if fn_cust is None:
+                raise AttributeError("[data] Najpierw ustaw data.cust = fun(bits): ...")
+            return self._generate('cust')
 
         # Target — generuj
         if name in self.TARGETS:
             return self._generate(name)
 
-        raise AttributeError(f"[data] Nieznany atrybut: '{name}'. Dostępne targety: {', '.join(self.TARGETS)}")
+        raise AttributeError(f"[data] Nieznany atrybut: '{name}'. Dostępne targety: {', '.join(self.TARGETS)}, cust")
 
     def _generate(self, target):
         if self._dtype == 'binary':
@@ -110,6 +134,14 @@ class DataBuilder:
     def _calc_target(self, inputs, target):
         x = inputs[0]
         bits = inputs
+
+        if target == 'cust':
+            fn_cust = self._cust_fn
+            if fn_cust is None:
+                raise ValueError("[data] data.cust nie jest ustawione")
+            fn, interp_call = fn_cust
+            result = interp_call(fn, [bits])
+            return float(result)
 
         if target == 'xor':
             result = 0

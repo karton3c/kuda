@@ -340,6 +340,8 @@ class Interpreter:
             return self.exec_til(node, env)
 
         # fun
+        if isinstance(node, AnonFunNode):
+            return KudaFunction(None, node.params, node.body, env)
         if isinstance(node, FunNode):
             func = KudaFunction(node.name, node.params, node.body, env)
             env.set(node.name, func)
@@ -388,6 +390,12 @@ class Interpreter:
             obj = self.eval(node.name.obj, env)
             if isinstance(obj, KudaInstance):
                 obj.set_attr(node.name.attr, value)
+            elif isinstance(obj, __import__('data_builder').DataBuilder) and node.name.attr == 'cust':
+                # Wrap KudaFunction so DataBuilder can call it
+                def make_call(fn, interp_self):
+                    def call(f, args): return interp_self._call_function(f, args)
+                    return (fn, call)
+                setattr(obj, '_cust_fn', make_call(value, self))
             else:
                 setattr(obj, node.name.attr, value)
 
@@ -651,6 +659,9 @@ class Interpreter:
     # === Ewaluacja wyrażeń ===
 
     def eval(self, node, env):
+        if isinstance(node, AnonFunNode):
+            return KudaFunction(None, node.params, node.body, env)
+
         if isinstance(node, NumberNode):
             return node.value
 

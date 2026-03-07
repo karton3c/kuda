@@ -24,6 +24,24 @@ class CGenerator:
     def emit(self, line=''):
         self.lines.append('    ' * self.indent + line)
 
+    def _uses_data_builder(self, ast):
+        """Check if AST uses data builder — if so, fall back to interpreter."""
+        import ast as pyast
+        src = str([(type(s).__name__, getattr(s, '__dict__', {})) for s in ast.statements])
+        # Simple check: walk all nodes looking for IdentNode with name 'data'
+        def _check(node):
+            if isinstance(node, IdentNode) and node.name == 'data':
+                return True
+            for attr in vars(node).values() if hasattr(node, '__dict__') else []:
+                if hasattr(attr, '__dict__') and _check(attr): return True
+                if isinstance(attr, list):
+                    for item in attr:
+                        if hasattr(item, '__dict__') and _check(item): return True
+            return False
+        for stmt in ast.statements:
+            if _check(stmt): return True
+        return False
+
     def generate(self, ast):
         self.includes.add('#include <stdio.h>')
         self.includes.add('#include <stdlib.h>')
@@ -36,12 +54,16 @@ class CGenerator:
 
         func_decls = []
         model_decls = []
+        net_decls = []
         main_stmts = []
         for stmt in ast.statements:
             if isinstance(stmt, FunNode):
                 func_decls.append(stmt)
             elif isinstance(stmt, ModelNode):
                 model_decls.append(stmt)
+            elif isinstance(stmt, NetNode):
+                net_decls.append(stmt)
+                main_stmts.append(stmt)  # keep in order as sentinel
             else:
                 main_stmts.append(stmt)
 
@@ -70,9 +92,24 @@ class CGenerator:
         for m in model_decls:
             model_code.extend(self._gen_model(m))
 
+        # Generate net structs and training code
+        net_code = []
+        net_var_types = {}  # net_name -> struct info
+        self._net_info = {}
+        for n in net_decls:
+            nc, ninfo = self._gen_net(n, main_stmts)
+            net_code.extend(nc)
+            net_var_types[n.name] = ninfo
+            self._net_info[n.name] = ninfo
+            self.vars[n.name] = 'net'
+
         func_code = []
         for f in func_decls:
             func_code.extend(self._gen_function(f))
+
+        # Register net names so they're known during prescan
+        for n in net_decls:
+            self.vars[n.name] = 'net'
 
         # Pre-declare all variables in main
         pre = self._prescan_vars(main_stmts, set())
@@ -86,6 +123,7 @@ class CGenerator:
             elif vtyp == 'bool':       self.emit(f'int {vname} = 0;')
             elif vtyp in ('list', 'strlist'):  self.emit(f'KList* {vname} = NULL;')
             elif vtyp in self.models:  self.emit(f'{vtyp}* {vname} = NULL;')
+            elif vtyp == 'net':        pass  # net structs declared in net_code
             else:                      self.emit(f'double {vname} = 0;')
         for stmt in main_stmts:
             self._gen_stmt(stmt)
@@ -100,6 +138,8 @@ class CGenerator:
         final.extend(runtime)
         final.append('')
         final.extend(model_code)
+        final.append('')
+        final.extend(net_code)
         final.append('')
         final.extend(func_code)
         final.append('')
@@ -149,6 +189,17 @@ class CGenerator:
                     elif fname in STR_FUNCS or self.func_return_types.get(fname) == 'str':
                         var_types[v] = 'str'
                     elif fname in LIST_FUNCS or self.func_return_types.get(fname) == 'list':
+                        var_types[v] = 'list'
+                    else:
+                        var_types.setdefault(v, 'double')
+                elif isinstance(node.value, AttrNode):
+                    # Sprawdź czy to data builder chain (data.binary.sequential.xor itp.)
+                    def _is_data_chain(n):
+                        if isinstance(n, IdentNode) and n.name == 'data': return True
+                        if isinstance(n, AttrNode): return _is_data_chain(n.obj)
+                        if isinstance(n, CallNode): return _is_data_chain(n.func)
+                        return False
+                    if _is_data_chain(node.value):
                         var_types[v] = 'list'
                     else:
                         var_types.setdefault(v, 'double')
@@ -427,6 +478,8 @@ class CGenerator:
             'double kuda_relu_d(double x){return x>0.0?1.0:0.0;}',
             'double kuda_leaky(double x){return x>0.0?x:0.01*x;}',
             'double kuda_leaky_d(double x){return x>0.0?1.0:0.01;}',
+            'double kuda_linear(double x){return x;}',
+            'double kuda_linear_d(double x){(void)x;return 1.0;}',
             'double kuda_clip(double x,double lo,double hi){return x<lo?lo:(x>hi?hi:x);}',
             '/* AI - list operations */',
             'double kuda_dot(KList* a,KList* b){double s=0;int n=a->len<b->len?a->len:b->len;for(int i=0;i<n;i++)s+=a->data[i]*b->data[i];return s;}',
@@ -548,6 +601,38 @@ class CGenerator:
             '}',
             '/* end Kuda runtime */',
         ]
+
+    def _tmp_var(self):
+        if not hasattr(self, '_tmp_counter'): self._tmp_counter = 0
+        self._tmp_counter += 1
+        return f'_kuda_tmp{self._tmp_counter}'
+
+    def _gen_net(self, node, pre_stmts=None):
+        """Delegate to net.py — generates C code for a net block."""
+        import sys, os
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        from net import gen_net_c
+        from interpreter import Interpreter
+        interp = Interpreter()
+        # Run only data-setup statements (e.g. data.cust = ...) before evaluating net params
+        # Do NOT run out(), if, loops etc. — only pure assignments to 'data' attributes
+        if pre_stmts:
+            from parser import NetNode as _NetNode, AssignNode as _AssignNode, AttrNode as _AttrNode, IdentNode as _IdentNode
+            for stmt in pre_stmts:
+                if isinstance(stmt, _NetNode):
+                    continue
+                if not (isinstance(stmt, _AssignNode)
+                        and isinstance(stmt.name, _AttrNode)
+                        and isinstance(stmt.name.obj, _IdentNode)
+                        and stmt.name.obj.name == 'data'):
+                    continue
+                try:
+                    interp.exec(stmt, interp.global_env)
+                except Exception:
+                    pass
+        def eval_fn(val_node):
+            return interp.eval(val_node, interp.global_env)
+        return gen_net_c(node, eval_fn)
 
     def _gen_model(self, node):
         """
@@ -817,6 +902,16 @@ class CGenerator:
                                     found.setdefault(node.name, 'double')
                             else:
                                 found.setdefault(node.name, 'double')
+                        elif isinstance(node.value, AttrNode):
+                            def _is_data_chain2(n):
+                                if isinstance(n, IdentNode) and n.name == 'data': return True
+                                if isinstance(n, AttrNode): return _is_data_chain2(n.obj)
+                                if isinstance(n, CallNode): return _is_data_chain2(n.func)
+                                return False
+                            if _is_data_chain2(node.value):
+                                found[node.name] = 'list'
+                            else:
+                                found.setdefault(node.name, 'double')
                         else:
                             found.setdefault(node.name, 'double')
                 if isinstance(node, IfNode):
@@ -910,6 +1005,9 @@ class CGenerator:
 
     def _gen_stmt(self, node):
         if node is None: return
+        if isinstance(node, NetNode):
+            self.emit(f'{node.name}_train();')
+            return
         if isinstance(node, AssignNode): self._gen_assign(node)
         elif isinstance(node, AugAssignNode):
             val, _ = self._gen_expr(node.value)
@@ -951,6 +1049,11 @@ class CGenerator:
             except: pass
 
     def _gen_assign(self, node):
+        # Skip data.cust = ... — it's only meaningful for DataBuilder setup, not C
+        if isinstance(node.name, AttrNode):
+            obj = node.name.obj
+            if isinstance(obj, IdentNode) and obj.name == 'data' and node.name.attr == 'cust':
+                return
         if isinstance(node.name, str):
             val, typ = self._gen_expr(node.value)
             if node.name not in self.vars:
@@ -1375,6 +1478,19 @@ class CGenerator:
         obj_val, obj_typ = self._gen_expr(attr_node.obj)
         method = attr_node.attr
         args_eval = [self._gen_expr(a) for a in arg_nodes]
+
+        # Net predict call: xor.predict([1.0, 0.0]) -> xor_predict(tmp_arr)
+        if obj_typ == 'net' and method == 'predict':
+            # args_eval[0] is a KList — build a temp C array
+            arg_val, _ = args_eval[0] if args_eval else ('NULL', 'list')
+            tmp = self._tmp_var()
+            # get net info
+            n_inputs = net_var_types.get(obj_val, {}).get('n_inputs', 1) if 'net_var_types' in dir() else 1
+            # find net info from net_decls info stored in self
+            n_in = self._net_info.get(obj_val, {}).get('n_inputs', 2)
+            self.emit(f'double {tmp}_arr[{n_in}];')
+            self.emit(f'for(int _i=0;_i<{n_in};_i++) {tmp}_arr[_i]=kuda_list_grab({arg_val},_i);')
+            return f'{obj_val}_predict({tmp}_arr)', 'double'
 
         # Model instance method call: hero.bark() -> Hero_bark(hero)
         if obj_typ in self.models:

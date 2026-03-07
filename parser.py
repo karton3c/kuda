@@ -73,6 +73,9 @@ class TilNode:
 class FunNode:
     def __init__(self, name, params, body): self.name = name; self.params = params; self.body = body
 
+class AnonFunNode:
+    def __init__(self, params, body): self.params = params; self.body = body
+
 class GiveNode:
     def __init__(self, value): self.value = value
 
@@ -210,6 +213,11 @@ class Parser:
             return self.parse_til()
 
         if tok.type == 'fun':
+            # peek: if next token after 'fun' is IDENT then named function statement
+            # if next is LPAREN then anonymous function expression
+            next_tok = self.tokens[self.pos + 1] if self.pos + 1 < len(self.tokens) else None
+            if next_tok and next_tok.type == TT_LPAREN:
+                return self.parse_anon_fun()
             return self.parse_fun()
 
         if tok.type == 'model':
@@ -341,6 +349,20 @@ class Parser:
         self._end_statement()
         body = self.parse_block()
         return FunNode(name, params, body)
+
+    def parse_anon_fun(self):
+        self.advance()  # 'fun'
+        self.expect(TT_LPAREN)
+        params = []
+        while self.current().type != TT_RPAREN:
+            params.append(self.expect_identifier())
+            if self.current().type == TT_COMMA:
+                self.advance()
+        self.expect(TT_RPAREN)
+        self.expect(TT_COLON)
+        self._end_statement()
+        body = self.parse_block()
+        return AnonFunNode(params, body)
 
     def parse_model(self):
         self.advance()  # 'model'
@@ -586,5 +608,12 @@ class Parser:
                     self.skip_newlines_and_indent()
             self.expect(TT_RBRACKET)
             return ListNode(elements)
+
+        if tok.type == 'fun':
+            self.advance()  # consume 'fun' peek token
+            next_tok = self.current()
+            if next_tok and next_tok.type == TT_LPAREN:
+                self.pos -= 1  # back up so parse_anon_fun can advance past 'fun'
+                return self.parse_anon_fun()
 
         raise ParseError(f"Unexpected token: '{tok.type}' ('{tok.value}')", tok.line)

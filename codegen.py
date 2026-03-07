@@ -1485,7 +1485,7 @@ class CGenerator:
             arg_val, _ = args_eval[0] if args_eval else ('NULL', 'list')
             tmp = self._tmp_var()
             # get net info
-            n_inputs = net_var_types.get(obj_val, {}).get('n_inputs', 1) if 'net_var_types' in dir() else 1
+            n_inputs = self._net_info.get(obj_val, {}).get('n_inputs', 1)
             # find net info from net_decls info stored in self
             n_in = self._net_info.get(obj_val, {}).get('n_inputs', 2)
             self.emit(f'double {tmp}_arr[{n_in}];')

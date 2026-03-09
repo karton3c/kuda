@@ -1492,6 +1492,43 @@ class CGenerator:
             self.emit(f'for(int _i=0;_i<{n_in};_i++) {tmp}_arr[_i]=kuda_list_grab({arg_val},_i);')
             return f'{obj_val}_predict({tmp}_arr)', 'double'
 
+        # Net write call: mynet.write("file.json") -> save weights to JSON
+        if obj_typ == 'net' and method == 'write':
+            filename_val, _ = args_eval[0] if args_eval else ('"weights.json"', 'str')
+            info = self._net_info.get(obj_val, {})
+            layers = info.get('layers', [])
+            n_layers = len(layers)
+            n_weights = sum(layers[i]*layers[i+1] for i in range(n_layers-1))
+            n_biases  = sum(layers[i+1] for i in range(n_layers-1))
+            tmp = self._tmp_var()
+            self.emit(f'{{ FILE* {tmp}_f = fopen({filename_val}, "w");')
+            self.emit(f'  if({tmp}_f) {{')
+            self.emit(f'    fprintf({tmp}_f, "{{\\n");')
+            self.emit(f'    fprintf({tmp}_f, "  \\"net\\": \\"{obj_val}\\",\\n");')
+            self.emit(f'    fprintf({tmp}_f, "  \\"layers\\": [");')
+            for i, l in enumerate(layers):
+                comma = ',' if i < n_layers - 1 else ''
+                self.emit(f'    fprintf({tmp}_f, "{l}{comma}");')
+            self.emit(f'    fprintf({tmp}_f, "],\\n");')
+            self.emit(f'    fprintf({tmp}_f, "  \\"W\\": [");')
+            self.emit(f'    for(int _wi=0; _wi<{n_weights}; _wi++) {{')
+            self.emit(f'      if(_wi < {n_weights}-1) fprintf({tmp}_f, "%.10f,", {obj_val}_W[_wi]);')
+            self.emit(f'      else fprintf({tmp}_f, "%.10f", {obj_val}_W[_wi]);')
+            self.emit(f'    }}')
+            self.emit(f'    fprintf({tmp}_f, "],\\n");')
+            self.emit(f'    fprintf({tmp}_f, "  \\"B\\": [");')
+            self.emit(f'    for(int _bi=0; _bi<{n_biases}; _bi++) {{')
+            self.emit(f'      if(_bi < {n_biases}-1) fprintf({tmp}_f, "%.10f,", {obj_val}_B[_bi]);')
+            self.emit(f'      else fprintf({tmp}_f, "%.10f", {obj_val}_B[_bi]);')
+            self.emit(f'    }}')
+            self.emit(f'    fprintf({tmp}_f, "]\\n");')
+            self.emit(f'    fprintf({tmp}_f, "}}\\n");')
+            self.emit(f'    fclose({tmp}_f);')
+            self.emit(f'    printf("Wagi zapisane do %s\\n", {filename_val});')
+            self.emit(f'  }}')
+            self.emit(f'}}')
+            return 'NULL', 'str'
+
         # Model instance method call: hero.bark() -> Hero_bark(hero)
         if obj_typ in self.models:
             args_str = ', '.join(v for v, t in args_eval)

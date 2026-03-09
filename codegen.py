@@ -1529,6 +1529,46 @@ class CGenerator:
             self.emit(f'}}')
             return 'NULL', 'str'
 
+        # Net load call: mynet.load("file.json") -> load weights from JSON
+        if obj_typ == 'net' and method == 'load':
+            filename_val, _ = args_eval[0] if args_eval else ('"weights.json"', 'str')
+            info = self._net_info.get(obj_val, {})
+            layers = info.get('layers', [])
+            n_layers = len(layers)
+            n_weights = sum(layers[i]*layers[i+1] for i in range(n_layers-1))
+            n_biases  = sum(layers[i+1] for i in range(n_layers-1))
+            tmp = self._tmp_var()
+            self.emit(f'{{ FILE* {tmp}_f = fopen({filename_val}, "r");')
+            self.emit(f'  if({tmp}_f) {{')
+            self.emit(f'    char {tmp}_buf[32];')
+            self.emit(f'    int {tmp}_wi = 0, {tmp}_bi = 0;')
+            self.emit(f'    int {tmp}_in_w = 0, {tmp}_in_b = 0;')
+            self.emit(f'    int {tmp}_c;')
+            # simple char-by-char parser: find "W": [ then read doubles, then "B": [
+            self.emit(f'    // skip to "W":[')
+            self.emit(f'    while(({tmp}_c = fgetc({tmp}_f)) != EOF) {{')
+            self.emit(f'      if({tmp}_c == \'W\' && !{tmp}_in_w && !{tmp}_in_b) {{')
+            self.emit(f'        fgetc({tmp}_f); fgetc({tmp}_f); fgetc({tmp}_f); // skip ":[')
+            self.emit(f'        {tmp}_in_w = 1;')
+            self.emit(f'      }} else if({tmp}_c == \'B\' && {tmp}_wi >= {n_weights} && !{tmp}_in_b) {{')
+            self.emit(f'        fgetc({tmp}_f); fgetc({tmp}_f); fgetc({tmp}_f); // skip ":[')
+            self.emit(f'        {tmp}_in_b = 1; {tmp}_in_w = 0;')
+            self.emit(f'      }} else if({tmp}_in_w && ({tmp}_c == \'-\' || ({tmp}_c >= \'0\' && {tmp}_c <= \'9\'))) {{')
+            self.emit(f'        ungetc({tmp}_c, {tmp}_f);')
+            self.emit(f'        double {tmp}_v; fscanf({tmp}_f, "%lf", &{tmp}_v);')
+            self.emit(f'        if({tmp}_wi < {n_weights}) {obj_val}_W[{tmp}_wi++] = {tmp}_v;')
+            self.emit(f'      }} else if({tmp}_in_b && ({tmp}_c == \'-\' || ({tmp}_c >= \'0\' && {tmp}_c <= \'9\'))) {{')
+            self.emit(f'        ungetc({tmp}_c, {tmp}_f);')
+            self.emit(f'        double {tmp}_v2; fscanf({tmp}_f, "%lf", &{tmp}_v2);')
+            self.emit(f'        if({tmp}_bi < {n_biases}) {obj_val}_B[{tmp}_bi++] = {tmp}_v2;')
+            self.emit(f'      }}')
+            self.emit(f'    }}')
+            self.emit(f'    fclose({tmp}_f);')
+            self.emit(f'    printf("Wagi wczytane z %s\\n", {filename_val});')
+            self.emit(f'  }} else {{ printf("Blad: nie mozna otworzyc %s\\n", {filename_val}); }}')
+            self.emit(f'}}')
+            return 'NULL', 'str'
+
         # Model instance method call: hero.bark() -> Hero_bark(hero)
         if obj_typ in self.models:
             args_str = ', '.join(v for v, t in args_eval)

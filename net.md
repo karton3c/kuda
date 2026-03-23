@@ -13,12 +13,13 @@ This document covers the `net` block, all training parameters, activations, Data
 4. [Activations](#activations)
 5. [Weight initialization](#weight-initialization)
 6. [predict()](#predict)
-7. [Multiple nets](#multiple-nets)
-8. [DataBuilder](#databuilder)
-9. [data.cust — custom targets](#datacust--custom-targets)
-10. [Manual datasets (~inputs / ~targets)](#manual-datasets-inputs--targets)
-11. [Tips & troubleshooting](#tips--troubleshooting)
-12. [Examples](#examples)
+7. [Saving & loading weights](#saving--loading-weights)
+8. [Multiple nets](#multiple-nets)
+9. [DataBuilder](#databuilder)
+10. [data.cust — custom targets](#datacust--custom-targets)
+11. [Manual datasets (~inputs / ~targets)](#manual-datasets-inputs--targets)
+12. [Tips & troubleshooting](#tips--troubleshooting)
+13. [Examples](#examples)
 
 ---
 
@@ -214,6 +215,92 @@ out(str(round(result)))      # rounded to 0 or 1
 For multi-output nets, `.predict()` returns the first output. Full multi-output support coming in a future version.
 
 **The input list must match the input layer size.** If you used `data.binary(4)` then inputs are 4 floats.
+
+---
+
+## Saving & loading weights
+
+After training, you can save the weights to a JSON file and load them later — without retraining.
+
+### write()
+
+```kuda
+mynet.write("mynet.json")
+```
+
+Saves weights, biases, layer sizes, and activation functions to a JSON file. Prints a confirmation message. Works in both C mode and interpreter mode.
+
+### load()
+
+```kuda
+mynet.load("mynet.json")
+```
+
+Loads weights from a previously saved file. After loading, `predict()` works immediately — no training needed. Prints a confirmation message. If the file doesn't exist, prints an error and continues.
+
+**In interpreter mode**, the net still needs to be declared with a `net` block (so Kuda knows the architecture), but you can use `~epochs = 1` to skip real training before loading:
+
+```kuda
+net xor:
+    ~layers = [2, 8, 1]
+    ~inputs = [[0.0, 0.0]]
+    ~targets = [[0.0]]
+    ~epochs = 1
+    ~log = 9999999
+
+xor.load("xor.json")
+
+out(str(round(xor.predict([0.0, 1.0]))))   # 1
+out(str(round(xor.predict([1.0, 1.0]))))   # 0
+```
+
+**In C mode**, `load()` is called after the net block runs (which trains normally). Typical pattern — train once and save, then use a separate file that just loads:
+
+```kuda
+# train.kuda — run once
+net xor:
+    ~data = data.binary(2).sequential.xor
+    ~layers = [auto, 8, 1]
+    ~lr = 0.1
+    ~epochs = 3000
+    ~stop = 0.001
+    ~log = 1000
+
+xor.write("xor.json")
+```
+
+```kuda
+# predict.kuda — run any time
+net xor:
+    ~data = data.binary(2).sequential.xor
+    ~layers = [auto, 8, 1]
+    ~lr = 0.1
+    ~epochs = 3000
+    ~stop = 0.001
+    ~log = 9999999
+
+xor.load("xor.json")
+
+out(str(round(xor.predict([0.0, 1.0]))))
+out(str(round(xor.predict([1.0, 1.0]))))
+```
+
+### JSON format
+
+The saved file looks like this:
+
+```json
+{
+  "net": "xor",
+  "layers": [2, 8, 1],
+  "act": "tanh",
+  "act_out": "tanh",
+  "W": [0.1234567890, -0.9876543210, ...],
+  "B": [0.0123456789, ...]
+}
+```
+
+Files saved in C mode and interpreter mode are compatible with each other.
 
 ---
 
@@ -461,6 +548,7 @@ The input layer size must match the length of each input row. You cannot use `au
 - Check that input values are floats: `1.0` not `1`
 - Check that input length matches `~layers[0]` (or `auto` input size)
 - Make sure training converged (loss should be low)
+- If using `load()`, make sure the file exists and the architecture matches the saved one
 
 ### C vs interpreter
 
@@ -568,6 +656,39 @@ net kor:
 out("XOR 1,0 = " + str(round(xor.predict([1.0, 0.0]))))
 out("OR  0,0 = " + str(round(kor.predict([0.0, 0.0]))))
 out("OR  1,0 = " + str(round(kor.predict([1.0, 0.0]))))
+```
+
+### Train once, predict later
+
+```kuda
+# step 1: train and save
+net xor:
+    ~data = data.binary(2).sequential.xor
+    ~layers = [auto, 8, 1]
+    ~lr = 0.1
+    ~epochs = 3000
+    ~stop = 0.001
+    ~log = 1000
+
+xor.write("xor.json")
+out("Saved.")
+```
+
+```kuda
+# step 2: load and predict (no training)
+net xor:
+    ~layers = [2, 8, 1]
+    ~inputs = [[0.0, 0.0]]
+    ~targets = [[0.0]]
+    ~epochs = 1
+    ~log = 9999999
+
+xor.load("xor.json")
+
+out("0,0 = " + str(round(xor.predict([0.0, 0.0]))))
+out("0,1 = " + str(round(xor.predict([0.0, 1.0]))))
+out("1,0 = " + str(round(xor.predict([1.0, 0.0]))))
+out("1,1 = " + str(round(xor.predict([1.0, 1.0]))))
 ```
 
 ---

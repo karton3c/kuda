@@ -617,14 +617,40 @@ class CGenerator:
         # Run only data-setup statements (e.g. data.cust = ...) before evaluating net params
         # Do NOT run out(), if, loops etc. — only pure assignments to 'data' attributes
         if pre_stmts:
-            from parser import NetNode as _NetNode, AssignNode as _AssignNode, AttrNode as _AttrNode, IdentNode as _IdentNode
+            from parser import (NetNode as _NetNode, AssignNode as _AssignNode,
+                                AttrNode as _AttrNode, IdentNode as _IdentNode,
+                                CallNode as _CallNode, NumberNode as _NumberNode,
+                                StringNode as _StringNode, ListNode as _ListNode)
+
+            def _is_data_chain(n):
+                """True if node is a data.binary(...).sequential.xor style chain."""
+                if isinstance(n, _IdentNode) and n.name == 'data': return True
+                if isinstance(n, _AttrNode):  return _is_data_chain(n.obj)
+                if isinstance(n, _CallNode):  return _is_data_chain(n.func)
+                return False
+
+            def _is_safe_value(n):
+                """True if node is safe to evaluate in the temp interpreter:
+                   DataBuilder chains, literals, list literals, or ident refs."""
+                if _is_data_chain(n):                return True
+                if isinstance(n, (_NumberNode, _StringNode)): return True
+                if isinstance(n, _IdentNode):        return True
+                if isinstance(n, _ListNode):         return True
+                return False
+
             for stmt in pre_stmts:
                 if isinstance(stmt, _NetNode):
                     continue
-                if not (isinstance(stmt, _AssignNode)
-                        and isinstance(stmt.name, _AttrNode)
-                        and isinstance(stmt.name.obj, _IdentNode)
-                        and stmt.name.obj.name == 'data'):
+                if not isinstance(stmt, _AssignNode):
+                    continue
+                # Always allow:  data.cust = ...  (existing behaviour)
+                is_data_attr = (isinstance(stmt.name, _AttrNode)
+                                and isinstance(stmt.name.obj, _IdentNode)
+                                and stmt.name.obj.name == 'data')
+                # Also allow:  <ident> = <safe_value>  (e.g. dataset = data.binary(8)...)
+                is_safe_var = (isinstance(stmt.name, str)
+                               and _is_safe_value(stmt.value))
+                if not (is_data_attr or is_safe_var):
                     continue
                 try:
                     interp.exec(stmt, interp.global_env)

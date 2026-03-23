@@ -65,6 +65,10 @@ class KudaNet:
             return BoundNetMethod(self, 'predict')
         if name == 'loss':
             return BoundNetMethod(self, 'loss')
+        if name == 'write':
+            return BoundNetMethod(self, 'write')
+        if name == 'load':
+            return BoundNetMethod(self, 'load')
         raise AttributeError(f"Net '{self.name}' has no attribute '{name}'")
 
     def __repr__(self):
@@ -529,6 +533,9 @@ class Interpreter:
                 std = math.sqrt(2.0/(n_in+n_out))
             return [_random.gauss(0, std) for _ in range(n_in*n_out)]
 
+        net.layers   = layers
+        net.act_name = act_name
+        net.out_name = out_name
         net.weights = []
         net.biases  = []
         for i in range(len(layers)-1):
@@ -810,6 +817,86 @@ class Interpreter:
                         acts = net._forward(inputs)
                         result = acts[-1]
                         return result[0] if len(result) == 1 else result
+                    if method.method == 'write':
+                        import json as _json
+                        path = args[0] if args else f"{net.name}_weights.json"
+                        layers = getattr(net, 'layers', [])
+                        W_flat = [w for layer in net.weights for w in layer]
+                        B_flat = [b for layer in net.biases  for b in layer]
+                        data = {
+                            'net':    net.name,
+                            'layers': layers,
+                            'act':    getattr(net, 'act_name', 'tanh'),
+                            'act_out':getattr(net, 'out_name', 'tanh'),
+                            'W':      W_flat,
+                            'B':      B_flat,
+                        }
+                        with open(path, 'w') as _f:
+                            _json.dump(data, _f, indent=2)
+                        print(f"Wagi zapisane do {path}")
+                        return None
+                    if method.method == 'load':
+                        import json as _json
+                        path = args[0] if args else f"{net.name}_weights.json"
+                        try:
+                            with open(path) as _f:
+                                data = _json.load(_f)
+                        except FileNotFoundError:
+                            print(f"Blad: nie mozna otworzyc {path}")
+                            return None
+                        layers = data.get('layers', getattr(net, 'layers', []))
+                        W_flat = data.get('W', [])
+                        B_flat = data.get('B', [])
+                        net.weights = []
+                        net.biases  = []
+                        idx_w = 0
+                        idx_b = 0
+                        for i in range(len(layers) - 1):
+                            n_in, n_out = layers[i], layers[i+1]
+                            net.weights.append(W_flat[idx_w:idx_w + n_in*n_out])
+                            idx_w += n_in * n_out
+                            net.biases.append(B_flat[idx_b:idx_b + n_out])
+                            idx_b += n_out
+                        net.layers   = layers
+                        net.act_name = data.get('act',     getattr(net, 'act_name', 'tanh'))
+                        net.out_name = data.get('act_out', getattr(net, 'out_name', 'tanh'))
+                        net.trained  = True
+                        # Rebuild _forward with correct activations
+                        import math as _math
+                        def _get_act(aname):
+                            if aname == 'tanh':    return _math.tanh
+                            if aname == 'sigmoid': return lambda x: 1/(1+_math.exp(-x))
+                            if aname == 'relu':    return lambda x: max(0.0, x)
+                            if aname == 'leaky':   return lambda x: x if x>0 else 0.01*x
+                            if aname == 'linear':  return lambda x: x
+                            return _math.tanh
+                        _act_f = _get_act(net.act_name)
+                        _out_f = _get_act(net.out_name)
+                        _layers = layers[:]
+                        def _make_forward(n, w_ref, b_ref, af, of, ls):
+                            def _fwd(inputs):
+                                a = inputs[:]
+                                activations = [a]
+                                for li in range(len(w_ref)):
+                                    n_in  = ls[li]
+                                    n_out = ls[li+1]
+                                    w = w_ref[li]
+                                    b = b_ref[li]
+                                    is_last = (li == len(w_ref)-1)
+                                    f = of if is_last else af
+                                    new_a = []
+                                    for j in range(n_out):
+                                        z = b[j]
+                                        for k in range(n_in):
+                                            z += a[k] * w[j*n_in+k]
+                                        new_a.append(f(z))
+                                    a = new_a
+                                    activations.append(a)
+                                return activations
+                            return _fwd
+                        net._forward = _make_forward(net.name, net.weights, net.biases, _act_f, _out_f, _layers)
+                        print(f"Wagi wczytane z {path}")
+                        return None
                     return None
                 return method
 
@@ -850,6 +937,81 @@ class Interpreter:
                 acts = net._forward(inputs)
                 result = acts[-1]
                 return result[0] if len(result) == 1 else result
+            if func.method == 'write':
+                import json as _json
+                path = args[0] if args else f"{net.name}_weights.json"
+                layers = getattr(net, 'layers', [])
+                W_flat = [w for layer in net.weights for w in layer]
+                B_flat = [b for layer in net.biases  for b in layer]
+                data = {
+                    'net':     net.name,
+                    'layers':  layers,
+                    'act':     getattr(net, 'act_name', 'tanh'),
+                    'act_out': getattr(net, 'out_name', 'tanh'),
+                    'W':       W_flat,
+                    'B':       B_flat,
+                }
+                with open(path, 'w') as _f:
+                    _json.dump(data, _f, indent=2)
+                print(f"Wagi zapisane do {path}")
+                return None
+            if func.method == 'load':
+                import json as _json, math as _math
+                path = args[0] if args else f"{net.name}_weights.json"
+                try:
+                    with open(path) as _f:
+                        data = _json.load(_f)
+                except FileNotFoundError:
+                    print(f"Blad: nie mozna otworzyc {path}")
+                    return None
+                layers = data.get('layers', getattr(net, 'layers', []))
+                W_flat = data.get('W', [])
+                B_flat = data.get('B', [])
+                net.weights = []
+                net.biases  = []
+                idx_w = 0; idx_b = 0
+                for i in range(len(layers) - 1):
+                    n_in, n_out = layers[i], layers[i+1]
+                    net.weights.append(W_flat[idx_w:idx_w + n_in*n_out])
+                    idx_w += n_in * n_out
+                    net.biases.append(B_flat[idx_b:idx_b + n_out])
+                    idx_b += n_out
+                net.layers   = layers
+                net.act_name = data.get('act',     getattr(net, 'act_name', 'tanh'))
+                net.out_name = data.get('act_out', getattr(net, 'out_name', 'tanh'))
+                net.trained  = True
+                def _get_act(aname):
+                    if aname == 'tanh':    return _math.tanh
+                    if aname == 'sigmoid': return lambda x: 1/(1+_math.exp(-x))
+                    if aname == 'relu':    return lambda x: max(0.0, x)
+                    if aname == 'leaky':   return lambda x: x if x>0 else 0.01*x
+                    if aname == 'linear':  return lambda x: x
+                    return _math.tanh
+                _act_f = _get_act(net.act_name)
+                _out_f = _get_act(net.out_name)
+                _lys = layers[:]
+                def _make_forward(w_ref, b_ref, af, of, ls):
+                    def _fwd(inputs):
+                        a = inputs[:]
+                        activations = [a]
+                        for li in range(len(w_ref)):
+                            n_in  = ls[li]
+                            n_out = ls[li+1]
+                            w = w_ref[li]; b = b_ref[li]
+                            is_last = (li == len(w_ref)-1)
+                            f = of if is_last else af
+                            new_a = []
+                            for j in range(n_out):
+                                z = b[j]
+                                for k in range(n_in): z += a[k] * w[j*n_in+k]
+                                new_a.append(f(z))
+                            a = new_a
+                            activations.append(a)
+                        return activations
+                    return _fwd
+                net._forward = _make_forward(net.weights, net.biases, _act_f, _out_f, _lys)
+                print(f"Wagi wczytane z {path}")
+                return None
             if func.method == 'loss':
                 return None
             return None

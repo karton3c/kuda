@@ -656,7 +656,15 @@ class CGenerator:
                     interp.exec(stmt, interp.global_env)
                 except Exception:
                     pass
+        _ACT_NAMES  = {'tanh', 'sigmoid', 'relu', 'leaky', 'linear'}
+        _INIT_NAMES = {'xav', 'he'}
         def eval_fn(val_node):
+            # If the node is an identifier that names an activation or init method,
+            # return the string directly — otherwise the interpreter returns a Python
+            # callable (lambda) which net.py can't look up in its act_c dict.
+            if isinstance(val_node, _IdentNode):
+                if val_node.name in _ACT_NAMES or val_node.name in _INIT_NAMES:
+                    return val_node.name
             return interp.eval(val_node, interp.global_env)
         return gen_net_c(node, eval_fn)
 

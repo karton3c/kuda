@@ -356,6 +356,8 @@ class Interpreter:
             return self.exec_model(node, env)
         if isinstance(node, NetNode):
             return self.exec_net(node, env)
+        if isinstance(node, NetLoadNode):
+            return self.exec_net_load(node, env)
 
         # give
         if isinstance(node, GiveNode):
@@ -630,6 +632,72 @@ class Interpreter:
 
         # Zarejestruj net w env
         env.set(node.name, net)
+
+    def exec_net_load(self, node, env):
+        import json as _json, math as _math
+        path = self.eval(node.path_node, env)
+
+        try:
+            with open(path) as _f:
+                data = _json.load(_f)
+        except FileNotFoundError:
+            raise RuntimeError_(f"net.load: nie mozna otworzyc '{path}'")
+
+        layers   = data['layers']
+        W_flat   = data['W']
+        B_flat   = data['B']
+        act_name = data.get('act', 'tanh')
+        out_name = data.get('act_out', act_name)
+
+        # Rebuild weights/biases as lists of lists
+        weights = []; biases = []
+        idx_w = 0; idx_b = 0
+        for i in range(len(layers) - 1):
+            n_in, n_out = layers[i], layers[i+1]
+            weights.append(W_flat[idx_w:idx_w + n_in*n_out]); idx_w += n_in*n_out
+            biases.append(B_flat[idx_b:idx_b + n_out]);        idx_b += n_out
+
+        def _get_act(aname):
+            if aname == 'tanh':    return _math.tanh
+            if aname == 'sigmoid': return lambda x: 1/(1+_math.exp(-x))
+            if aname == 'relu':    return lambda x: max(0.0, x)
+            if aname == 'leaky':   return lambda x: x if x>0 else 0.01*x
+            if aname == 'linear':  return lambda x: x
+            return _math.tanh
+
+        act_f = _get_act(act_name)
+        out_f = _get_act(out_name)
+
+        def _make_forward(w_ref, b_ref, af, of, ls):
+            def _fwd(inputs):
+                a = inputs[:]
+                activations = [a]
+                for li in range(len(w_ref)):
+                    n_in  = ls[li]; n_out = ls[li+1]
+                    w = w_ref[li]; b = b_ref[li]
+                    is_last = (li == len(w_ref)-1)
+                    f = of if is_last else af
+                    new_a = []
+                    for j in range(n_out):
+                        z = b[j]
+                        for k in range(n_in): z += a[k] * w[j*n_in+k]
+                        new_a.append(f(z))
+                    a = new_a; activations.append(a)
+                return activations
+            return _fwd
+
+        net = KudaNet(node.name, {})
+        net.weights  = weights
+        net.biases   = biases
+        net.layers   = layers
+        net.act_name = act_name
+        net.out_name = out_name
+        net.trained  = True
+        net._forward = _make_forward(net.weights, net.biases, act_f, out_f, layers)
+        net._layers  = layers
+
+        env.set(node.name, net)
+        print(f"Wagi wczytane z {path}")
 
     def exec_model(self, node, env):
         model_env = Environment(env)

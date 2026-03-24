@@ -86,6 +86,12 @@ class NetNode:
     def __init__(self, name, params): self.name = name; self.params = params
     # params = dict of ~key -> value node
 
+class NetLoadNode:
+    def __init__(self, name, path_node):
+        self.name = name
+        self.path_node = path_node
+        self.body = []  # empty — no block body, needed by generic exec loops
+
 class UseNode:
     def __init__(self, module, alias=None):
         self.module = module
@@ -224,6 +230,21 @@ class Parser:
             return self.parse_model()
         if tok.type == 'net':
             return self.parse_net()
+
+        # ~name = net.load("file.json") — top-level net load
+        if tok.type == TT_TILDE:
+            next_tok = self.tokens[self.pos + 1] if self.pos + 1 < len(self.tokens) else None
+            if next_tok and next_tok.type == TT_IDENT:
+                # peek further: IDENT ASSIGN net . load ( ...
+                p = self.pos + 2
+                def _peek(offset):
+                    return self.tokens[p + offset] if p + offset < len(self.tokens) else None
+                if (_peek(0) and _peek(0).type == TT_ASSIGN and
+                    _peek(1) and _peek(1).type == 'net' and
+                    _peek(2) and _peek(2).type == TT_DOT and
+                    _peek(3) and _peek(3).type == TT_IDENT and _peek(3).value == 'load' and
+                    _peek(4) and _peek(4).type == TT_LPAREN):
+                    return self.parse_net_load()
 
         if tok.type in ('give', 'return'):
             return self.parse_give()
@@ -397,6 +418,20 @@ class Parser:
         if self.current().type == TT_DEDENT:
             self.advance()
         return NetNode(name, params)
+
+    def parse_net_load(self):
+        # ~name = net.load("file.json")
+        self.advance()  # ~
+        name = self.expect(TT_IDENT).value
+        self.expect(TT_ASSIGN)   # =
+        self.expect('net')       # net (keyword token)
+        self.expect(TT_DOT)      # .
+        self.advance()           # load (IDENT, already verified in peek)
+        self.expect(TT_LPAREN)   # (
+        path_node = self.parse_expr()
+        self.expect(TT_RPAREN)   # )
+        self._end_statement()
+        return NetLoadNode(name, path_node)
 
     def parse_give(self):
         self.advance()  # 'give'

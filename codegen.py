@@ -55,6 +55,7 @@ class CGenerator:
         func_decls = []
         model_decls = []
         net_decls = []
+        net_load_decls = []
         main_stmts = []
         for stmt in ast.statements:
             if isinstance(stmt, FunNode):
@@ -63,6 +64,9 @@ class CGenerator:
                 model_decls.append(stmt)
             elif isinstance(stmt, NetNode):
                 net_decls.append(stmt)
+                main_stmts.append(stmt)  # keep in order as sentinel
+            elif isinstance(stmt, NetLoadNode):
+                net_load_decls.append(stmt)
                 main_stmts.append(stmt)  # keep in order as sentinel
             else:
                 main_stmts.append(stmt)
@@ -103,12 +107,21 @@ class CGenerator:
             self._net_info[n.name] = ninfo
             self.vars[n.name] = 'net'
 
+        for n in net_load_decls:
+            nc, ninfo = self._gen_net_load_decl(n)
+            net_code.extend(nc)
+            net_var_types[n.name] = ninfo
+            self._net_info[n.name] = ninfo
+            self.vars[n.name] = 'net'
+
         func_code = []
         for f in func_decls:
             func_code.extend(self._gen_function(f))
 
         # Register net names so they're known during prescan
         for n in net_decls:
+            self.vars[n.name] = 'net'
+        for n in net_load_decls:
             self.vars[n.name] = 'net'
 
         # Pre-declare all variables in main
@@ -668,7 +681,129 @@ class CGenerator:
             return interp.eval(val_node, interp.global_env)
         return gen_net_c(node, eval_fn)
 
-    def _gen_model(self, node):
+    def _gen_net_load_decl(self, node):
+        """Generate C declarations for ~name = net.load("file.json").
+        Reads the JSON at codegen time to know architecture,
+        then emits a _load() function that reads weights at runtime."""
+        import json as _json
+        from interpreter import Interpreter as _Interp
+        interp = _Interp()
+        path = interp.eval(node.path_node, interp.global_env)
+
+        try:
+            with open(path) as _f:
+                data = _json.load(_f)
+        except FileNotFoundError:
+            raise Exception(f"net.load: plik '{path}' nie istnieje (potrzebny przy kompilacji)")
+
+        layers   = data['layers']
+        act_name = data.get('act', 'tanh')
+        out_name = data.get('act_out', act_name)
+
+        name  = node.name
+        NAME  = name.upper()
+        n_layers  = len(layers)
+        max_layer = max(layers)
+        n_weights = sum(layers[i]*layers[i+1] for i in range(n_layers-1))
+        n_biases  = sum(layers[i+1]           for i in range(n_layers-1))
+        n_inputs  = layers[0]
+        n_outputs = layers[-1]
+
+        act_c = {
+            'tanh':    ('kuda_tanh_act', 'kuda_tanh_d'),
+            'sigmoid': ('kuda_sigmoid',  'kuda_sigmoid_d'),
+            'relu':    ('kuda_relu',      'kuda_relu_d'),
+            'leaky':   ('kuda_leaky',     'kuda_leaky_d'),
+            'linear':  ('kuda_linear_act','kuda_linear_d'),
+        }
+        af, af_d = act_c.get(act_name, ('kuda_tanh_act', 'kuda_tanh_d'))
+        of, of_d = act_c.get(out_name, (af, af_d))
+
+        L = []
+        L.append(f'/* net.load: {name} from {path} */')
+        L.append(f'static int    {name}_layers[]   = {{{", ".join(str(l) for l in layers)}}};')
+        L.append(f'static double {name}_W[{n_weights}];')
+        L.append(f'static double {name}_B[{n_biases}];')
+        L.append(f'static int    {name}_n_inputs   = {n_inputs};')
+        L.append(f'static int    {name}_n_outputs  = {n_outputs};')
+        L.append(f'static int    {name}_n_samples  = 0;')
+        L.append('')
+
+        # activation wrappers
+        L.append(f'static double {name}_act_fn(double x, int is_last) {{')
+        if af == of:
+            L.append(f'    (void)is_last; return {af}(x);')
+        else:
+            L.append(f'    return is_last ? {of}(x) : {af}(x);')
+        L.append('}')
+        L.append(f'static double {name}_act_d_fn(double x, int is_last) {{')
+        if af_d == of_d:
+            L.append(f'    (void)is_last; return {af_d}(x);')
+        else:
+            L.append(f'    return is_last ? {of_d}(x) : {af_d}(x);')
+        L.append('}')
+        L.append('')
+
+        L.append(f'#define {NAME}_MAX_LAYER {max_layer}')
+        L.append(f'#define {NAME}_N_LAYERS  {n_layers}')
+        L.append('')
+
+        # forward pass (same as gen_net_c)
+        L.append(f'static void {name}_forward(double* input, double acts[][{NAME}_MAX_LAYER]) {{')
+        L.append(f'    for(int j=0; j<{name}_layers[0]; j++) acts[0][j] = input[j];')
+        L.append(f'    int w_off=0;')
+        L.append(f'    for(int li=0; li<{NAME}_N_LAYERS-1; li++) {{')
+        L.append(f'        int ni={name}_layers[li], no={name}_layers[li+1];')
+        L.append(f'        int is_last=(li=={NAME}_N_LAYERS-2);')
+        L.append(f'        for(int j=0; j<no; j++) {{')
+        L.append(f'            double z={name}_B[/*b_off*/0];')  # placeholder — fix below
+        L.append(f'            int b_off=0; for(int _l=0;_l<li;_l++) b_off+={name}_layers[_l+1];')
+        L.append(f'            z={name}_B[b_off+j];')
+        L.append(f'            for(int k=0; k<ni; k++) z += acts[li][k] * {name}_W[w_off + j*ni + k];')
+        L.append(f'            acts[li+1][j] = {name}_act_fn(z, is_last);')
+        L.append(f'        }}')
+        L.append(f'        w_off += ni*no;')
+        L.append(f'    }}')
+        L.append(f'}}')
+        L.append('')
+
+        # predict
+        L.append(f'static double {name}_predict(double* input) {{')
+        L.append(f'    double acts[{NAME}_N_LAYERS][{NAME}_MAX_LAYER];')
+        L.append(f'    {name}_forward(input, acts);')
+        L.append(f'    return acts[{NAME}_N_LAYERS-1][0];')
+        L.append(f'}}')
+        L.append('')
+
+        # load function — reads weights from file at runtime
+        L.append(f'static void {name}_load() {{')
+        L.append(f'    FILE* f = fopen("{path}", "r");')
+        L.append(f'    if(!f) {{ printf("net.load: nie mozna otworzyc {path}\\n"); return; }}')
+        L.append(f'    int wi=0, bi=0, in_w=0, in_b=0, c;')
+        L.append(f'    while((c=fgetc(f))!=EOF) {{')
+        L.append(f'        if(c==\'W\' && !in_w && !in_b) {{ fgetc(f);fgetc(f);fgetc(f); in_w=1; }}')
+        L.append(f'        else if(c==\'B\' && wi>={n_weights} && !in_b) {{ fgetc(f);fgetc(f);fgetc(f); in_b=1; in_w=0; }}')
+        L.append(f'        else if(in_w && (c==\'-\'||(c>=\'0\'&&c<=\'9\'))) {{')
+        L.append(f'            ungetc(c,f); double v; fscanf(f,"%lf",&v);')
+        L.append(f'            if(wi<{n_weights}) {name}_W[wi++]=v;')
+        L.append(f'        }} else if(in_b && (c==\'-\'||(c>=\'0\'&&c<=\'9\'))) {{')
+        L.append(f'            ungetc(c,f); double v; fscanf(f,"%lf",&v);')
+        L.append(f'            if(bi<{n_biases}) {name}_B[bi++]=v;')
+        L.append(f'        }}')
+        L.append(f'    }}')
+        L.append(f'    fclose(f);')
+        L.append(f'    printf("Wagi wczytane z {path}\\n");')
+        L.append(f'}}')
+        L.append('')
+
+        ninfo = {
+            'layers':   layers,
+            'n_inputs': n_inputs,
+            'n_outputs':n_outputs,
+        }
+        return L, ninfo
+
+
         """
         Generate a C struct + constructor + methods for a Kuda model.
         
@@ -1041,6 +1176,10 @@ class CGenerator:
         if node is None: return
         if isinstance(node, NetNode):
             self.emit(f'{node.name}_train();')
+            return
+        if isinstance(node, NetLoadNode):
+            # runtime load: call the generated _load() function
+            self.emit(f'{node.name}_load();')
             return
         if isinstance(node, AssignNode): self._gen_assign(node)
         elif isinstance(node, AugAssignNode):

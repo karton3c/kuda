@@ -228,7 +228,9 @@ class CGenerator:
                 for _, body in node.cases: self._deep_prescan(body, var_types)
                 if node.else_body: self._deep_prescan(node.else_body, var_types)
             if isinstance(node, RepeatNode): self._deep_prescan(node.body, var_types)
-            if isinstance(node, EachNode):   self._deep_prescan(node.body, var_types)
+            if isinstance(node, EachNode):
+                var_types[node.var] = 'double'
+                self._deep_prescan(node.body, var_types)
             if isinstance(node, TilNode):    self._deep_prescan(node.body, var_types)
 
     def _scan_call_sites(self, stmts):
@@ -492,6 +494,7 @@ class CGenerator:
             'double kuda_leaky(double x){return x>0.0?x:0.01*x;}',
             'double kuda_leaky_d(double x){return x>0.0?1.0:0.01;}',
             'double kuda_linear(double x){return x;}',
+            'double kuda_linear_act(double x){return x;}',
             'double kuda_linear_d(double x){(void)x;return 1.0;}',
             'double kuda_clip(double x,double lo,double hi){return x<lo?lo:(x>hi?hi:x);}',
             '/* AI - list operations */',
@@ -1291,14 +1294,21 @@ class CGenerator:
         if isinstance(node.iterable, CallNode) and isinstance(node.iterable.func, IdentNode):
             if node.iterable.func.name == 'range':
                 args = node.iterable.args
+                self.vars[node.var] = 'double'
                 if len(args) == 1:
                     end, _ = self._gen_expr(args[0])
-                    self.vars[node.var] = 'double'
                     self.emit(f'for (double {node.var} = 0; {node.var} < {end}; {node.var}++) {{')
                 elif len(args) == 2:
                     start, _ = self._gen_expr(args[0]); end, _ = self._gen_expr(args[1])
-                    self.vars[node.var] = 'double'
                     self.emit(f'for (double {node.var} = {start}; {node.var} < {end}; {node.var}++) {{')
+                elif len(args) == 3:
+                    start, _ = self._gen_expr(args[0])
+                    end,   _ = self._gen_expr(args[1])
+                    step,  _ = self._gen_expr(args[2])
+                    self.emit(f'for (double {node.var} = {start}; {node.var} < {end}; {node.var} += {step}) {{')
+                else:
+                    self.emit(f'/* range(): unsupported arg count */')
+                    return
                 self.indent += 1
                 for s in node.body: self._gen_stmt(s)
                 self.indent -= 1

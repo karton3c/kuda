@@ -1,5 +1,5 @@
 # Kuda — Neural Networks & DataBuilder
-**Version 0.2.6**
+**Version 0.2.7**
 
 This document covers the `net` block, all training parameters, activations, DataBuilder datasets, and `data.cust`.
 
@@ -212,7 +212,7 @@ out(str(result))             # raw float
 out(str(round(result)))      # rounded to 0 or 1
 ```
 
-For multi-output nets, `.predict()` returns the first output. Full multi-output support coming in a future version.
+For multi-output nets, `.predict()` returns a list of all output values.
 
 **The input list must match the input layer size.** If you used `data.binary(4)` then inputs are 4 floats.
 
@@ -693,4 +693,4 @@ out("1,1 = " + str(round(xor.predict([1.0, 1.0]))))
 
 ---
 
-*Kuda v0.2.6 — open source*
+*Kuda v0.2.7 — open source*

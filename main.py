@@ -40,9 +40,9 @@ def parse_source(source):
 def run_interpreted(path):
     with open(path, 'r', encoding='utf-8') as f:
         source = f.read()
+    interpreter = Interpreter()
     try:
         ast = parse_source(source)
-        interpreter = Interpreter()
         interpreter.run(ast)
     except LexerError as e:
         print(str(e)); sys.exit(1)
@@ -51,7 +51,9 @@ def run_interpreted(path):
     except RuntimeError_ as e:
         print(str(e)); sys.exit(1)
     except Exception as e:
-        print(f"[Kuda] Error: {e}"); sys.exit(1)
+        line = interpreter.current_line
+        prefix = f"[Kuda] Line {line}: " if line else "[Kuda] Error: "
+        print(f"{prefix}{e}"); sys.exit(1)
 
 def compile_to_binary(path, output=None, silent=False):
     from codegen import CGenerator, CompileError

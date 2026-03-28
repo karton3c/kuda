@@ -3,52 +3,52 @@ from lexer import *
 # === Węzły AST ===
 
 class NumberNode:
-    def __init__(self, value): self.value = value
+    def __init__(self, value, line=0): self.value = value; self.line = line
 
 class StringNode:
-    def __init__(self, value): self.value = value
+    def __init__(self, value, line=0): self.value = value; self.line = line
 
 class BoolNode:
-    def __init__(self, value): self.value = value
+    def __init__(self, value, line=0): self.value = value; self.line = line
 
 class NoneNode:
-    pass
+    def __init__(self, line=0): self.line = line
 
 class IdentNode:
-    def __init__(self, name): self.name = name
+    def __init__(self, name, line=0): self.name = name; self.line = line
 
 class AssignNode:
-    def __init__(self, name, value): self.name = name; self.value = value
+    def __init__(self, name, value, line=0): self.name = name; self.value = value; self.line = line
 
 class BinOpNode:
-    def __init__(self, left, op, right): self.left = left; self.op = op; self.right = right
+    def __init__(self, left, op, right, line=0): self.left = left; self.op = op; self.right = right; self.line = line
 
 class UnaryOpNode:
-    def __init__(self, op, operand): self.op = op; self.operand = operand
+    def __init__(self, op, operand, line=0): self.op = op; self.operand = operand; self.line = line
 
 class CallNode:
-    def __init__(self, func, args): self.func = func; self.args = args
+    def __init__(self, func, args, line=0): self.func = func; self.args = args; self.line = line
 
 class AttrNode:
-    def __init__(self, obj, attr): self.obj = obj; self.attr = attr
+    def __init__(self, obj, attr, line=0): self.obj = obj; self.attr = attr; self.line = line
 
 class IndexNode:
-    def __init__(self, obj, index): self.obj = obj; self.index = index
+    def __init__(self, obj, index, line=0): self.obj = obj; self.index = index; self.line = line
 
 class IndexAssignNode:
-    def __init__(self, target, value): self.target = target; self.value = value
+    def __init__(self, target, value, line=0): self.target = target; self.value = value; self.line = line
 
 class ListNode:
-    def __init__(self, elements): self.elements = elements
+    def __init__(self, elements, line=0): self.elements = elements; self.line = line
 
 class TupleNode:
-    def __init__(self, elements): self.elements = elements
+    def __init__(self, elements, line=0): self.elements = elements; self.line = line
 
 class DictNode:
-    def __init__(self, pairs): self.pairs = pairs  # lista (klucz, wartość)
+    def __init__(self, pairs, line=0): self.pairs = pairs; self.line = line  # lista (klucz, wartość)
 
 class AugAssignNode:
-    def __init__(self, name, op, value): self.name = name; self.op = op; self.value = value
+    def __init__(self, name, op, value, line=0): self.name = name; self.op = op; self.value = value; self.line = line
 
 class ListCompNode:
     def __init__(self, expr, var, iterable): self.expr = expr; self.var = var; self.iterable = iterable
@@ -452,17 +452,18 @@ class Parser:
 
     def parse_assign_or_expr(self):
         expr = self.parse_expr()
+        line = getattr(expr, 'line', 0)
 
         if self.current().type == TT_ASSIGN:
             self.advance()
             value = self.parse_expr()
             self._end_statement()
             if isinstance(expr, IdentNode):
-                return AssignNode(expr.name, value)
+                return AssignNode(expr.name, value, line)
             elif isinstance(expr, AttrNode):
-                return AssignNode(expr, value)
+                return AssignNode(expr, value, line)
             elif isinstance(expr, IndexNode):
-                return IndexAssignNode(expr, value)
+                return IndexAssignNode(expr, value, line)
             else:
                 raise ParseError("Invalid left-hand side of assignment", self.current().line)
 
@@ -476,7 +477,7 @@ class Parser:
             value = self.parse_expr()
             self._end_statement()
             if isinstance(expr, IdentNode):
-                return AugAssignNode(expr.name, op, value)
+                return AugAssignNode(expr.name, op, value, line)
             else:
                 raise ParseError("Invalid left-hand side of augmented assignment", self.current().line)
 
@@ -491,65 +492,74 @@ class Parser:
     def parse_or(self):
         left = self.parse_and()
         while self.current().type == 'or':
+            line = self.current().line
             op = self.advance().value
             right = self.parse_and()
-            left = BinOpNode(left, op, right)
+            left = BinOpNode(left, op, right, line)
         return left
 
     def parse_and(self):
         left = self.parse_not()
         while self.current().type == 'and':
+            line = self.current().line
             op = self.advance().value
             right = self.parse_not()
-            left = BinOpNode(left, op, right)
+            left = BinOpNode(left, op, right, line)
         return left
 
     def parse_not(self):
         if self.current().type == 'not':
+            line = self.current().line
             op = self.advance().value
             operand = self.parse_not()
-            return UnaryOpNode(op, operand)
+            return UnaryOpNode(op, operand, line)
         return self.parse_compare()
 
     def parse_compare(self):
         left = self.parse_add()
         while self.current().type in (TT_EQ, TT_NEQ, TT_LT, TT_GT, TT_LTE, TT_GTE):
+            line = self.current().line
             op = self.advance().value
             right = self.parse_add()
-            left = BinOpNode(left, op, right)
+            left = BinOpNode(left, op, right, line)
         return left
 
     def parse_add(self):
         left = self.parse_mul()
         while self.current().type in (TT_PLUS, TT_MINUS):
+            line = self.current().line
             op = self.advance().value
             right = self.parse_mul()
-            left = BinOpNode(left, op, right)
+            left = BinOpNode(left, op, right, line)
         return left
 
     def parse_mul(self):
         left = self.parse_unary()
         while self.current().type in (TT_MUL, TT_DIV, TT_MOD):
+            line = self.current().line
             op = self.advance().value
             right = self.parse_unary()
-            left = BinOpNode(left, op, right)
+            left = BinOpNode(left, op, right, line)
         return left
 
     def parse_unary(self):
         if self.current().type == TT_MINUS:
+            line = self.current().line
             op = self.advance().value
             operand = self.parse_unary()
-            return UnaryOpNode(op, operand)
+            return UnaryOpNode(op, operand, line)
         return self.parse_postfix()
 
     def parse_postfix(self):
         node = self.parse_primary()
         while True:
             if self.current().type == TT_DOT:
+                line = self.current().line
                 self.advance()
                 attr = self.expect(TT_IDENT).value
-                node = AttrNode(node, attr)
+                node = AttrNode(node, attr, line)
             elif self.current().type == TT_LPAREN:
+                line = self.current().line
                 self.advance()
                 args = []
                 while self.current().type != TT_RPAREN:
@@ -557,12 +567,13 @@ class Parser:
                     if self.current().type == TT_COMMA:
                         self.advance()
                 self.expect(TT_RPAREN)
-                node = CallNode(node, args)
+                node = CallNode(node, args, line)
             elif self.current().type == TT_LBRACKET:
+                line = self.current().line
                 self.advance()
                 index = self.parse_expr()
                 self.expect(TT_RBRACKET)
-                node = IndexNode(node, index)
+                node = IndexNode(node, index, line)
             else:
                 break
         return node
@@ -572,23 +583,23 @@ class Parser:
 
         if tok.type == TT_NUMBER:
             self.advance()
-            return NumberNode(tok.value)
+            return NumberNode(tok.value, tok.line)
 
         if tok.type == TT_STRING:
             self.advance()
-            return StringNode(tok.value)
+            return StringNode(tok.value, tok.line)
 
         if tok.type == TT_BOOL:
             self.advance()
-            return BoolNode(tok.value)
+            return BoolNode(tok.value, tok.line)
 
         if tok.value == 'None':
             self.advance()
-            return NoneNode()
+            return NoneNode(tok.line)
 
         if tok.type == TT_IDENT:
             self.advance()
-            return IdentNode(tok.value)
+            return IdentNode(tok.value, tok.line)
 
         if tok.type == TT_LPAREN:
             self.advance()

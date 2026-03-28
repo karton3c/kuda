@@ -147,6 +147,7 @@ class RuntimeError_(Exception):
 class Interpreter:
     def __init__(self):
         self.global_env = Environment()
+        self.current_line = 0
         self._setup_builtins()
 
     def _setup_builtins(self):
@@ -734,6 +735,10 @@ class Interpreter:
     # === Ewaluacja wyrażeń ===
 
     def eval(self, node, env):
+        # Track current line for error messages
+        if hasattr(node, 'line') and node.line:
+            self.current_line = node.line
+
         if isinstance(node, AnonFunNode):
             return KudaFunction(None, node.params, node.body, env)
 
@@ -768,7 +773,10 @@ class Interpreter:
             return result
 
         if isinstance(node, IdentNode):
-            return env.get(node.name)
+            try:
+                return env.get(node.name)
+            except RuntimeError as e:
+                raise RuntimeError_(str(e).replace("Undefined variable: ", "Undefined variable: "), self.current_line)
 
         if isinstance(node, BinOpNode):
             return self.eval_binop(node, env)
@@ -781,25 +789,28 @@ class Interpreter:
             if isinstance(obj, KudaInstance):
                 return obj.get_attr(node.attr)
             elif hasattr(obj, 'get_attr'):
-                # Handles _PyModuleWrapper from python_bridge
                 return obj.get_attr(node.attr)
             elif hasattr(obj, node.attr):
                 return getattr(obj, node.attr)
             else:
-                raise RuntimeError_(f"No attribute '{node.attr}'")
+                raise RuntimeError_(f"No attribute '{node.attr}'", self.current_line)
 
         if isinstance(node, IndexNode):
             obj = self.eval(node.obj, env)
             idx = self.eval(node.index, env)
-            return obj[idx]
+            try:
+                return obj[int(idx) if isinstance(idx, float) and idx == int(idx) else idx]
+            except (IndexError, KeyError, TypeError) as e:
+                raise RuntimeError_(f"Index error: {e}", self.current_line)
 
         if isinstance(node, CallNode):
             return self.eval_call(node, env)
 
-        raise RuntimeError_(f"Unknown AST node: {type(node)}")
+        raise RuntimeError_(f"Unknown AST node: {type(node)}", self.current_line)
 
     def eval_binop(self, node, env):
         op = node.op
+        line = getattr(node, 'line', 0) or self.current_line
 
         # Leniwi operatorzy logiczni
         if op == 'and':
@@ -810,19 +821,26 @@ class Interpreter:
         left = self.eval(node.left, env)
         right = self.eval(node.right, env)
 
-        if op == '+': return left + right
-        if op == '-': return left - right
-        if op == '*': return left * right
-        if op == '/': return left / right
-        if op == '%': return left % right
-        if op == '==': return left == right
-        if op == '!=': return left != right
-        if op == '<': return left < right
-        if op == '>': return left > right
-        if op == '<=': return left <= right
-        if op == '>=': return left >= right
+        try:
+            if op == '+': return left + right
+            if op == '-': return left - right
+            if op == '*': return left * right
+            if op == '/':
+                if right == 0: raise RuntimeError_(f"Division by zero", line)
+                return left / right
+            if op == '%': return left % right
+            if op == '==': return left == right
+            if op == '!=': return left != right
+            if op == '<': return left < right
+            if op == '>': return left > right
+            if op == '<=': return left <= right
+            if op == '>=': return left >= right
+        except RuntimeError_:
+            raise
+        except Exception as e:
+            raise RuntimeError_(f"Type error on '{op}': {e}", line)
 
-        raise RuntimeError_(f"Unknown operator: '{op}'")
+        raise RuntimeError_(f"Unknown operator: '{op}'", line)
 
     def eval_unary(self, node, env):
         val = self.eval(node.operand, env)

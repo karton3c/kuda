@@ -61,6 +61,10 @@ def gen_net_c(node, interp_eval_fn):
     out_name  = params.get('act_out', act_name)
     init_name = params.get('init', 'xav')
     log_every = int(params.get('log', 100))
+    # ~verbose = False silences training output (overrides ~log)
+    verbose = params.get('verbose', True)
+    if verbose is False or verbose == 0:
+        log_every = 0
     stop_loss = float(params.get('stop', -1.0))
 
     name     = node.name
@@ -165,11 +169,17 @@ def gen_net_c(node, interp_eval_fn):
     L.append(f'}}')
     L.append('')
 
-    # predict
-    L.append(f'static double {name}_predict(double* input) {{')
+    # predict — fills output array, returns first value for single-output compat
+    L.append(f'static void {name}_predict_all(double* input, double* out_arr) {{')
     L.append(f'    double acts[{NAME}_N_LAYERS][{NAME}_MAX_LAYER];')
     L.append(f'    {name}_forward(input, acts);')
-    L.append(f'    return acts[{name}_n_layers-1][0];')
+    L.append(f'    int last = {name}_n_layers-1;')
+    L.append(f'    for(int j=0; j<{name}_layers[last]; j++) out_arr[j] = acts[last][j];')
+    L.append(f'}}')
+    L.append(f'static double {name}_predict(double* input) {{')
+    L.append(f'    double _out[{NAME}_MAX_LAYER];')
+    L.append(f'    {name}_predict_all(input, _out);')
+    L.append(f'    return _out[0];')
     L.append(f'}}')
     L.append('')
 
@@ -222,7 +232,8 @@ def gen_net_c(node, interp_eval_fn):
     L.append(f'        if(log_every > 0 && ep % log_every == 0)')
     L.append(f'            printf("Epoch %d | Loss: %.6f\\n", ep, avg_loss);')
     L.append(f'        if(stop > 0 && avg_loss < stop) {{')
-    L.append(f'            printf("Early stop epoch %d | Loss: %.6f\\n", ep, avg_loss);')
+    if log_every > 0:
+        L.append(f'            printf("Early stop epoch %d | Loss: %.6f\\n", ep, avg_loss);')
     L.append(f'            break;')
     L.append(f'        }}')
     L.append(f'    }}')

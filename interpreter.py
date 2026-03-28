@@ -514,6 +514,10 @@ class Interpreter:
         init_name = params.get('init', 'xav')
         pack_size = params.get('pack', None)
         log_every = int(params.get('log', 100))
+        # ~verbose = False silences training output
+        verbose = params.get('verbose', True)
+        if verbose is False or verbose == 0:
+            log_every = 0
         stop_loss = float(params.get('stop', -1.0))
 
         # Funkcje aktywacji
@@ -624,7 +628,8 @@ class Interpreter:
             if log_every > 0 and epoch % log_every == 0:
                 print(f"Epoch {epoch} | Loss: {round(avg_loss, 6)}")
             if stop_loss > 0 and avg_loss < stop_loss:
-                print(f"Early stop epoch {epoch} | Loss: {round(avg_loss, 6)}")
+                if log_every > 0:
+                    print(f"Early stop epoch {epoch} | Loss: {round(avg_loss, 6)}")
                 break
 
         net.trained = True

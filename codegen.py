@@ -1072,6 +1072,16 @@ class CGenerator:
                                     found[node.name] = 'list'
                                 else:
                                     found.setdefault(node.name, 'double')
+                            elif isinstance(node.value.func, AttrNode):
+                                # obj.method() — check for net.predict() multi-output
+                                attr_node = node.value.func
+                                if (isinstance(attr_node.obj, IdentNode)
+                                        and attr_node.attr == 'predict'
+                                        and attr_node.obj.name in self._net_info):
+                                    n_out = self._net_info[attr_node.obj.name].get('n_outputs', 1)
+                                    found[node.name] = 'list' if n_out > 1 else 'double'
+                                else:
+                                    found.setdefault(node.name, 'double')
                             else:
                                 found.setdefault(node.name, 'double')
                         elif isinstance(node.value, AttrNode):
@@ -1664,16 +1674,24 @@ class CGenerator:
 
         # Net predict call: xor.predict([1.0, 0.0]) -> xor_predict(tmp_arr)
         if obj_typ == 'net' and method == 'predict':
-            # args_eval[0] is a KList — build a temp C array
             arg_val, _ = args_eval[0] if args_eval else ('NULL', 'list')
             tmp = self._tmp_var()
-            # get net info
-            n_inputs = self._net_info.get(obj_val, {}).get('n_inputs', 1)
-            # find net info from net_decls info stored in self
-            n_in = self._net_info.get(obj_val, {}).get('n_inputs', 2)
+            info = self._net_info.get(obj_val, {})
+            n_in   = info.get('n_inputs',  2)
+            n_out  = info.get('n_outputs', 1)
+            layers = info.get('layers', [])
             self.emit(f'double {tmp}_arr[{n_in}];')
             self.emit(f'for(int _i=0;_i<{n_in};_i++) {tmp}_arr[_i]=kuda_list_grab({arg_val},_i);')
-            return f'{obj_val}_predict({tmp}_arr)', 'double'
+            if n_out == 1:
+                # single output — return double (backward compat)
+                return f'{obj_val}_predict({tmp}_arr)', 'double'
+            else:
+                # multi-output — return KList
+                self.emit(f'double {tmp}_out[{n_out}];')
+                self.emit(f'{obj_val}_predict_all({tmp}_arr, {tmp}_out);')
+                self.emit(f'KList* {tmp}_lst = kuda_list_new();')
+                self.emit(f'for(int _j=0;_j<{n_out};_j++) kuda_list_add({tmp}_lst, {tmp}_out[_j]);')
+                return f'{tmp}_lst', 'list'
 
         # Net write call: mynet.write("file.json") -> save weights to JSON
         if obj_typ == 'net' and method == 'write':

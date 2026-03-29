@@ -1,4 +1,4 @@
-# Kuda v0.2.7 - C Code Generator with Full Builtins Support
+# Kuda v0.2.8 - C Code Generator with Full Builtins Support
 from parser import *
 import math
 
@@ -298,7 +298,7 @@ class CGenerator:
 
     def _runtime(self):
         return [
-            '/* Kuda v0.2.7 Runtime - Full Featured */',
+            '/* Kuda v0.2.8 Runtime - Full Featured */',
             '#define MAX_STR  4096',
             '#define MAX_MAT  512',
             '#define MAX_LIST 1024',
@@ -324,6 +324,19 @@ class CGenerator:
             '        l->data = realloc(l->data, sizeof(double) * l->cap);',
             '    }',
             '    l->data[l->len++] = v;',
+            '}',
+            '',
+            '/* Store a pointer (e.g. nested KList*) as a double slot via intptr_t */',
+            'void kuda_list_add_ptr(KList* l, void* ptr) {',
+            '    if (l->len >= l->cap) {',
+            '        l->cap *= 2;',
+            '        l->data = realloc(l->data, sizeof(double) * l->cap);',
+            '    }',
+            '    l->data[l->len++] = (double)(intptr_t)ptr;',
+            '}',
+            'KList* kuda_list_grab_ptr(KList* l, int idx) {',
+            '    if (idx < 0 || idx >= l->len) return NULL;',
+            '    return (KList*)(intptr_t)l->data[idx];',
             '}',
             '',
             'double kuda_list_grab(KList* l, int idx) {',
@@ -632,12 +645,12 @@ class CGenerator:
         interp = Interpreter()
         # Run only data-setup statements (e.g. data.cust = ...) before evaluating net params
         # Do NOT run out(), if, loops etc. — only pure assignments to 'data' attributes
-        if pre_stmts:
-            from parser import (NetNode as _NetNode, AssignNode as _AssignNode,
-                                AttrNode as _AttrNode, IdentNode as _IdentNode,
-                                CallNode as _CallNode, NumberNode as _NumberNode,
-                                StringNode as _StringNode, ListNode as _ListNode)
+        from parser import (NetNode as _NetNode, AssignNode as _AssignNode,
+                            AttrNode as _AttrNode, IdentNode as _IdentNode,
+                            CallNode as _CallNode, NumberNode as _NumberNode,
+                            StringNode as _StringNode, ListNode as _ListNode)
 
+        if pre_stmts:
             def _is_data_chain(n):
                 """True if node is a data.binary(...).sequential.xor style chain."""
                 if isinstance(n, _IdentNode) and n.name == 'data': return True
@@ -659,11 +672,9 @@ class CGenerator:
                     continue
                 if not isinstance(stmt, _AssignNode):
                     continue
-                # Always allow:  data.cust = ...  (existing behaviour)
                 is_data_attr = (isinstance(stmt.name, _AttrNode)
                                 and isinstance(stmt.name.obj, _IdentNode)
                                 and stmt.name.obj.name == 'data')
-                # Also allow:  <ident> = <safe_value>  (e.g. dataset = data.binary(8)...)
                 is_safe_var = (isinstance(stmt.name, str)
                                and _is_safe_value(stmt.value))
                 if not (is_data_attr or is_safe_var):
@@ -674,17 +685,115 @@ class CGenerator:
                     pass
         _ACT_NAMES  = {'tanh', 'sigmoid', 'relu', 'leaky', 'linear'}
         _INIT_NAMES = {'xav', 'he'}
+        _runtime_inputs  = None
+        _runtime_targets = None
+        for key, val_node in node.params.items():
+            if key == 'inputs' and isinstance(val_node, _IdentNode):
+                try:
+                    v = interp.eval(val_node, interp.global_env)
+                    # If empty list or not a list-of-lists, treat as runtime variable
+                    if not v or not isinstance(v, list) or not v or not isinstance(v[0], (list, tuple)):
+                        _runtime_inputs = val_node.name
+                except Exception:
+                    _runtime_inputs = val_node.name
+            if key == 'targets' and isinstance(val_node, _IdentNode):
+                try:
+                    v = interp.eval(val_node, interp.global_env)
+                    if not v or not isinstance(v, list) or not v or not isinstance(v[0], (list, tuple)):
+                        _runtime_targets = val_node.name
+                except Exception:
+                    _runtime_targets = val_node.name
+
         def eval_fn(val_node):
-            # If the node is an identifier that names an activation or init method,
-            # return the string directly — otherwise the interpreter returns a Python
-            # callable (lambda) which net.py can't look up in its act_c dict.
             if isinstance(val_node, _IdentNode):
                 if val_node.name in _ACT_NAMES or val_node.name in _INIT_NAMES:
                     return val_node.name
             return interp.eval(val_node, interp.global_env)
-        return gen_net_c(node, eval_fn)
 
-    def _gen_net_load_decl(self, node):
+        result_lines, ninfo = gen_net_c(node, eval_fn)
+
+        # If inputs/targets are runtime KList* variables, patch the train function
+        # to read data from them dynamically instead of static arrays
+        if _runtime_inputs and _runtime_targets:
+            name = node.name
+            if not hasattr(self, '_dynamic_nets'):
+                self._dynamic_nets = {}
+            self._dynamic_nets[name] = (_runtime_inputs, _runtime_targets)
+            result_lines = self._patch_net_dynamic_data(
+                result_lines, name, _runtime_inputs, _runtime_targets, ninfo)
+
+        return result_lines, ninfo
+
+    def _patch_net_dynamic_data(self, lines, name, inputs_var, targets_var, ninfo):
+        """Patch generated net C code to read inputs/targets from runtime KList* vars."""
+        NAME = name.upper()
+        n_in  = ninfo.get('n_inputs',  1)
+        n_out = ninfo.get('n_outputs', 1)
+
+        new_lines = []
+        injected = False
+        in_train = False
+
+        for line in lines:
+            # Remove static data array declarations
+            if (f'static double {name}_data_in[]' in line or
+                    f'static double {name}_data_tgt[]' in line):
+                continue
+
+            # Replace n_samples static decl with 0
+            if f'static int    {name}_n_samples' in line:
+                new_lines.append(f'static int    {name}_n_samples  = 0;')
+                continue
+
+            # Change train() signature to accept KList* params
+            if f'static void {name}_train()' in line:
+                in_train = True
+                new_lines.append(f'static void {name}_train(KList* {inputs_var}_arg, KList* {targets_var}_arg) {{')
+                continue
+
+            if in_train and not injected and 'const int n  =' in line:
+                # inject dynamic data unpacking
+                new_lines.append(f'    int _dyn_n = (int){inputs_var}_arg->len;')
+                new_lines.append(f'    {name}_n_samples = _dyn_n;')
+                new_lines.append(f'    double* _dyn_inp = malloc(sizeof(double) * _dyn_n * {n_in});')
+                new_lines.append(f'    double* _dyn_tgt = malloc(sizeof(double) * _dyn_n * {n_out});')
+                new_lines.append(f'    for(int _si=0; _si<_dyn_n; _si++) {{')
+                new_lines.append(f'        KList* _row_in  = kuda_list_grab_ptr({inputs_var}_arg, _si);')
+                new_lines.append(f'        KList* _row_tgt = kuda_list_grab_ptr({targets_var}_arg, _si);')
+                new_lines.append(f'        if(_row_in)  for(int _fi=0;_fi<{n_in}; _fi++) _dyn_inp[_si*{n_in} +_fi]=kuda_list_grab(_row_in, _fi);')
+                new_lines.append(f'        if(_row_tgt) for(int _fo=0;_fo<{n_out};_fo++) _dyn_tgt[_si*{n_out}+_fo]=kuda_list_grab(_row_tgt,_fo);')
+                new_lines.append(f'    }}')
+                new_lines.append(f'    const int n = _dyn_n;')
+                new_lines.append(f'    const int ni = {n_in};')
+                new_lines.append(f'    const int no = {n_out};')
+                injected = True
+                # skip the original "const int n  = ..." line
+                continue
+
+            if in_train and injected:
+                # skip duplicate ni/no declarations
+                if ('const int ni =' in line or 'const int no =' in line or
+                        'const int n  =' in line):
+                    continue
+                # redirect static array refs to dynamic ones
+                line = line.replace(f'{name}_data_in  +', '_dyn_inp +')
+                line = line.replace(f'{name}_data_tgt +', '_dyn_tgt +')
+                line = line.replace(f'{name}_data_in +',  '_dyn_inp +')
+
+            new_lines.append(line)
+
+        # Fix call site: mynet_train() -> mynet_train(inputs, targets)
+        patched = []
+        for line in new_lines:
+            stripped = line.strip()
+            if stripped == f'{name}_train();':
+                indent = line[:len(line) - len(line.lstrip())]
+                line = f'{indent}{name}_train({inputs_var}, {targets_var});'
+            patched.append(line)
+
+        return patched
+
+
         """Generate C declarations for ~name = net.load("file.json").
         Reads the JSON at codegen time to know architecture,
         then emits a _load() function that reads weights at runtime."""
@@ -1188,7 +1297,12 @@ class CGenerator:
     def _gen_stmt(self, node):
         if node is None: return
         if isinstance(node, NetNode):
-            self.emit(f'{node.name}_train();')
+            dyn = getattr(self, '_dynamic_nets', {}).get(node.name)
+            if dyn:
+                iv, tv = dyn
+                self.emit(f'{node.name}_train({iv}, {tv});')
+            else:
+                self.emit(f'{node.name}_train();')
             return
         if isinstance(node, NetLoadNode):
             # runtime load: call the generated _load() function
@@ -1505,7 +1619,13 @@ class CGenerator:
             if typ == 'str': return f'((double)atof({val}))', 'double'
             return f'((double)({val}))', 'double'
         if name == 'abs':   val, _ = args_eval[0]; return f'fabs({val})', 'double'
-        if name == 'round': val, _ = args_eval[0]; return f'round({val})', 'double'
+        if name == 'round':
+            val, _ = args_eval[0]
+            if len(args_eval) == 1:
+                return f'(double)(long long)round({val})', 'double'
+            else:
+                prec, _ = args_eval[1]
+                return f'(round({val} * pow(10, {prec})) / pow(10, {prec}))', 'double'
         if name == 'exp':   val, _ = args_eval[0]; return f'exp({val})', 'double'
         if name == 'log':   val, _ = args_eval[0]; return f'log({val})', 'double'
         if name == 'prw':   val, _ = args_eval[0]; return f'sqrt({val})', 'double'
@@ -1815,7 +1935,12 @@ class CGenerator:
 
         if obj_typ == 'list':
             if method == 'add' and args_eval:
-                v,_=args_eval[0]; self.emit(f'kuda_list_add({obj_val}, {v});'); return '0', 'double'
+                v, vtyp = args_eval[0]
+                if vtyp in ('list', 'strlist'):
+                    self.emit(f'kuda_list_add_ptr({obj_val}, {v});')
+                else:
+                    self.emit(f'kuda_list_add({obj_val}, {v});')
+                return '0', 'double'
             if method == 'del' and args_eval:
                 v,_=args_eval[0]; self.emit(f'kuda_list_del({obj_val}, {v});'); return '0', 'double'
             if method == 'sort':

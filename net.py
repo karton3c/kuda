@@ -51,8 +51,14 @@ def gen_net_c(node, interp_eval_fn):
             layers.append(n_inputs)
         else:
             layers.append(int(l))
-    if layers[0] != n_inputs:
+    # Only auto-fix layer[0] if we actually have dataset info
+    # If dataset is empty (runtime inputs), trust the explicit layers value
+    if dataset and layers[0] != n_inputs:
         layers[0] = n_inputs
+    # Update n_inputs/n_outputs from layers when dataset unavailable
+    if not dataset:
+        n_inputs  = layers[0]
+        n_outputs = layers[-1]
 
     # Step 4: hyperparams
     lr        = float(params.get('lr', 0.01))
@@ -229,8 +235,9 @@ def gen_net_c(node, interp_eval_fn):
     L.append(f'            }}')
     L.append(f'        }}')
     L.append(f'        double avg_loss = total_loss / n;')
-    L.append(f'        if(log_every > 0 && ep % log_every == 0)')
-    L.append(f'            printf("Epoch %d | Loss: %.6f\\n", ep, avg_loss);')
+    if log_every > 0:
+        L.append(f'        if(ep % {log_every} == 0)')
+        L.append(f'            printf("Epoch %d | Loss: %.6f\\n", ep, avg_loss);')
     L.append(f'        if(stop > 0 && avg_loss < stop) {{')
     if log_every > 0:
         L.append(f'            printf("Early stop epoch %d | Loss: %.6f\\n", ep, avg_loss);')

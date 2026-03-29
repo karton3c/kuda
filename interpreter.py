@@ -168,7 +168,7 @@ class Interpreter:
         env.set('max',   lambda args: max(args) if len(args) > 1 else max(args[0]))
         env.set('min',   lambda args: min(args) if len(args) > 1 else min(args[0]))
         env.set('sum',   lambda args: sum(args[0]))
-        env.set('round', lambda args: (lambda r: float(int(r)) if r == int(r) else r)(round(args[0], int(args[1])) if len(args) > 1 else float(round(args[0]))))
+        env.set('round', lambda args: int(round(args[0])) if len(args) == 1 else round(args[0], int(args[1])))
         env.set('rand',        lambda args: random.randint(int(args[0]), int(args[1])))
         env.set('rand_float',  lambda args: random.random())
         env.set('rand_normal', lambda args: random.gauss(args[0], args[1]))

@@ -1,5 +1,5 @@
 # Kuda — Neural Networks & DataBuilder
-**Version 0.2.7**
+**Version 0.2.8**
 
 This document covers the `net` block, all training parameters, activations, DataBuilder datasets, and `data.cust`.
 
@@ -693,4 +693,4 @@ out("1,1 = " + str(round(xor.predict([1.0, 1.0]))))
 
 ---
 
-*Kuda v0.2.7 — open source*
+*Kuda v0.2.8 — open source*

@@ -380,12 +380,43 @@ class Interpreter:
         self.eval(node, env)
 
     def exec_use(self, node, env):
+        # File import: use "file.kuda" or use @"path"
+        if node.filepath is not None:
+            import os
+            if node.absolute:
+                path = os.path.abspath(node.filepath)
+            else:
+                base = getattr(self, '_current_file', None)
+                if base:
+                    path = os.path.join(os.path.dirname(base), node.filepath)
+                else:
+                    path = node.filepath
+            path = os.path.normpath(path)
+            if not os.path.exists(path):
+                raise RuntimeError_(f"use: plik nie istnieje: '{path}'")
+            from lexer import Lexer as _Lexer
+            from parser import Parser as _Parser
+            with open(path, 'r', encoding='utf-8') as f:
+                source = f.read()
+            try:
+                ast = _Parser(_Lexer(source).tokenize()).parse()
+            except Exception as e:
+                raise RuntimeError_(f"use: blad parsowania '{path}': {e}")
+            old_file = getattr(self, '_current_file', None)
+            self._current_file = path
+            for stmt in ast.statements:
+                self.exec(stmt, env)
+            self._current_file = old_file
+            return
+
+        # Python module import: use numpy or use numpy as np
         try:
             import importlib
             mod = importlib.import_module(node.module)
-            env.set(node.module, mod)
+            name = node.alias if node.alias else node.module
+            env.set(name, mod)
         except ImportError:
-            raise RuntimeError_(f"Nie możon zaimportować: '{node.module}'")
+            raise RuntimeError_(f"Nie mozna zaimportowac: '{node.module}'")
 
     def exec_assign(self, node, env):
         value = self.eval(node.value, env)

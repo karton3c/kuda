@@ -93,9 +93,11 @@ class NetLoadNode:
         self.body = []  # empty — no block body, needed by generic exec loops
 
 class UseNode:
-    def __init__(self, module, alias=None):
-        self.module = module
-        self.alias = alias  # e.g. 'use numpy as np' -> alias = 'np'
+    def __init__(self, module, alias=None, filepath=None, absolute=False):
+        self.module = module      # Python module name (e.g. 'numpy')
+        self.alias = alias        # optional alias
+        self.filepath = filepath  # Kuda file path (e.g. 'utils.kuda')
+        self.absolute = absolute  # True if @"path" (relative to CWD)
 
 class OutNode:
     def __init__(self, value): self.value = value
@@ -274,9 +276,20 @@ class Parser:
 
     def parse_use(self):
         self.advance()  # 'use'
+
+        # use "file.kuda"  or  use @"file.kuda"
+        absolute = False
+        if self.current().type == TT_AT:
+            self.advance()  # @
+            absolute = True
+        if self.current().type == TT_STRING:
+            filepath = self.advance().value
+            self._end_statement()
+            return UseNode(module=None, filepath=filepath, absolute=absolute)
+
+        # use numpy  or  use numpy as np
         name = self.expect(TT_IDENT).value
         alias = None
-        # Handle: use numpy as np
         if self.current().type == 'as':
             self.advance()  # 'as'
             alias = self.expect_identifier()

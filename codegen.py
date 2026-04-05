@@ -42,7 +42,36 @@ class CGenerator:
             if _check(stmt): return True
         return False
 
-    def generate(self, ast):
+    def _expand_uses(self, ast, source_file=None):
+        """Recursively expand use "file.kuda" by inlining the file's AST."""
+        import os
+        from lexer import Lexer as _Lex
+        from parser import Parser as _Par, ProgramNode as _ProgNode
+        expanded = []
+        for stmt in ast.statements:
+            if isinstance(stmt, UseNode) and stmt.filepath is not None:
+                if stmt.absolute:
+                    path = os.path.abspath(stmt.filepath)
+                else:
+                    base = source_file or os.getcwd()
+                    if os.path.isfile(base):
+                        base = os.path.dirname(base)
+                    path = os.path.join(base, stmt.filepath)
+                path = os.path.normpath(path)
+                if not os.path.exists(path):
+                    raise CompileError(f"use: plik nie istnieje: '{path}'")
+                with open(path, 'r', encoding='utf-8') as f:
+                    src = f.read()
+                sub_ast = _Par(_Lex(src).tokenize()).parse()
+                # Recursively expand nested uses relative to this file
+                sub_ast = self._expand_uses(sub_ast, path)
+                expanded.extend(sub_ast.statements)
+            else:
+                expanded.append(stmt)
+        ast.statements = expanded
+        return ast
+
+    def generate(self, ast, source_file=None):
         self.includes.add('#include <stdio.h>')
         self.includes.add('#include <stdlib.h>')
         self.includes.add('#include <string.h>')
@@ -51,6 +80,9 @@ class CGenerator:
         self.includes.add('#include <unistd.h>')
         self.includes.add('#include <ctype.h>')
         self.includes.add('#include <stdint.h>')
+
+        # Expand use "file.kuda" statements by inlining their AST
+        ast = self._expand_uses(ast, source_file)
 
         func_decls = []
         model_decls = []
@@ -524,7 +556,13 @@ class CGenerator:
             'double kuda_acc(KList* pred,KList* target){int c=0;for(int i=0;i<target->len;i++)if((int)round(pred->data[i])==(int)round(target->data[i]))c++;return (double)c/target->len;}',
             'double kuda_crent(KList* pred,KList* target){double s=0;for(int i=0;i<target->len;i++){double p=pred->data[i]<1e-15?1e-15:pred->data[i];s+=target->data[i]*log(p);}return -s/target->len;}',
             '/* AI - list ops */',
-            'KList* kuda_snip(KList* l,int start,int end){KList* r=kuda_list_new();for(int i=start;i<end&&i<l->len;i++)kuda_list_add(r,l->data[i]);return r;}',
+            'KList* kuda_list_concat(KList* a, KList* b) {',
+            '    KList* r = kuda_list_new();',
+            '    for(int i=0;i<a->len;i++) kuda_list_add(r, a->data[i]);',
+            '    for(int i=0;i<b->len;i++) kuda_list_add(r, b->data[i]);',
+            '    return r;',
+            '}',
+            '',
             '',
             'char* kuda_input(const char* p){',
             '    printf("%s",p); char* b=malloc(MAX_STR);',
@@ -1149,8 +1187,20 @@ class CGenerator:
                 if fname in STR_FUNCS: return True
                 if fname in getattr(self, 'func_return_types', {}) and self.func_return_types[fname] == 'str': return True
             if isinstance(node, IdentNode):
-                # Jeśli zmienna była już wykryta jako str
                 return found.get(node.name) == 'str' or self.vars.get(node.name) == 'str'
+            return False
+
+        def is_list_expr(node):
+            """Sprawdź czy wyrażenie zwraca listę."""
+            if isinstance(node, (ListNode, ListCompNode)): return True
+            if isinstance(node, BinOpNode) and node.op == '+':
+                return is_list_expr(node.left) or is_list_expr(node.right)
+            if isinstance(node, IdentNode):
+                t = found.get(node.name) or self.vars.get(node.name)
+                return t in ('list', 'strlist')
+            if isinstance(node, CallNode) and isinstance(node.func, IdentNode):
+                fname = node.func.name
+                if fname in LIST_FUNCS2: return True
             return False
 
         def scan(stmts):
@@ -1167,6 +1217,8 @@ class CGenerator:
                                 found[node.name] = 'strlist' if has_str else 'list'
                             else:
                                 found[node.name] = 'list'
+                        elif is_list_expr(node.value):
+                            found[node.name] = 'list'
                         elif is_str_expr(node.value):
                             found[node.name] = 'str'
                         elif isinstance(node.value, CallNode):
@@ -1552,6 +1604,8 @@ class CGenerator:
             if ltyp != 'str': lval = f'kuda_double_to_str({lval})'
             if rtyp != 'str': rval = f'kuda_double_to_str({rval})'
             return f'kuda_concat({lval}, {rval})', 'str'
+        if op == '+' and ltyp in ('list', 'strlist') and rtyp in ('list', 'strlist'):
+            return f'kuda_list_concat({lval}, {rval})', 'list'
         # String comparison using strcmp
         if ltyp == 'str' or rtyp == 'str':
             if op == '==': return f'(strcmp({lval}, {rval}) == 0)', 'bool'

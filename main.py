@@ -38,9 +38,11 @@ def parse_source(source):
     return parser.parse()
 
 def run_interpreted(path):
+    import os
     with open(path, 'r', encoding='utf-8') as f:
         source = f.read()
     interpreter = Interpreter()
+    interpreter._current_file = os.path.abspath(path)
     try:
         ast = parse_source(source)
         interpreter.run(ast)
@@ -68,7 +70,7 @@ def compile_to_binary(path, output=None, silent=False):
 
     try:
         gen = CGenerator()
-        c_code = gen.generate(ast)
+        c_code = gen.generate(ast, source_file=os.path.abspath(path))
     except Exception as e:
         print(f"[Kuda CompileError] {e}"); sys.exit(1)
 

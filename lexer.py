@@ -31,6 +31,7 @@ TT_DIV_EQ    = 'DIV_EQ'
 TT_COMMA     = 'COMMA'
 TT_DOT       = 'DOT'
 TT_TILDE     = 'TILDE'
+TT_AT        = 'AT'
 TT_NEWLINE   = 'NEWLINE'
 TT_INDENT    = 'INDENT'
 TT_DEDENT    = 'DEDENT'
@@ -284,5 +285,7 @@ class Lexer:
             self.tokens.append(Token(TT_DOT, '.', line))
         elif ch == '~':
             self.tokens.append(Token(TT_TILDE, '~', line))
+        elif ch == '@':
+            self.tokens.append(Token(TT_AT, '@', line))
         else:
             raise LexerError(f"Unknown character: '{ch}'", line)

@@ -27,9 +27,10 @@ Kuda is a programming language with Python-like syntax that compiles to C for fa
 18. [ML Functions](#ml-functions)
 19. [Neural Networks (net block)](#neural-networks-net-block)
 20. [DataBuilder](#databuilder)
-21. [Python Libraries](#python-libraries)
-22. [Error Handling](#error-handling)
-23. [Full Examples](#full-examples)
+21. [Importing Files](#importing-files)
+22. [Python Libraries](#python-libraries)
+23. [Error Handling](#error-handling)
+24. [Full Examples](#full-examples)
 
 ---
 
@@ -172,6 +173,11 @@ nums.del(1)
 nums.sort()
 nums.rev()
 
+# Concatenate
+a = [1, 2, 3]
+b = [4, 5, 6]
+c = a + b           # [1, 2, 3, 4, 5, 6]
+
 # Info
 nums.fd(4)
 nums.cnt(5)
@@ -231,7 +237,14 @@ repeat 5:
     out("hello")
 
 # each (for each)
-each i in range(10):
+# each (for each)
+each i in range(10):         # 0..9
+    out(str(i))
+
+each i in range(2, 8):       # 2..7
+    out(str(i))
+
+each i in range(0, 10, 2):   # 0, 2, 4, 6, 8
     out(str(i))
 
 each x, y in [(1, 2), (3, 4)]:
@@ -313,7 +326,8 @@ pot(2, 8)           # power: 256.0
 dwn(3.7)            # floor: 3
 up(3.2)             # ceil: 4
 abs(-42)            # 42
-round(3.14159, 2)   # 3.14
+round(3.7)          # 4  (returns int)
+round(3.14159, 2)   # 3.14 (with precision)
 max(10, 20)         # 20
 min(10, 20)         # 10
 rand(1, 100)        # random integer
@@ -469,6 +483,39 @@ data = data.binary(4).sequential.cust
 
 ---
 
+## Importing Files
+
+Split your code across multiple files using `use`:
+
+```kuda
+use "utils.kuda"          # relative to current file
+use "libs/math.kuda"      # subfolder relative to current file
+use @"src/helpers.kuda"   # relative to CWD / project root
+use @"/abs/path/to/file.kuda"  # absolute path
+```
+
+All functions, variables and models from the imported file become available immediately. Imports are resolved at both compile time (C mode) and run time (interpreter). Nested imports work — a file can `use` other files.
+
+**Example:**
+
+```kuda
+# mathlib.kuda
+fun square(x):
+    give x * x
+
+PI = 3.14159265
+```
+
+```kuda
+# main.kuda
+use "mathlib.kuda"
+
+out(str(square(5.0)))   # 25
+out(str(PI))            # 3.14159265
+```
+
+---
+
 ## Python Libraries
 
 ```kuda
@@ -489,6 +536,15 @@ try:
     result = int("not a number")
 fail:
     out("Something went wrong!")
+```
+
+Runtime errors include the line number:
+
+```
+[Kuda RuntimeError] Line 3: Type error on '+': ...
+[Kuda RuntimeError] Line 7: Undefined variable: 'x'
+[Kuda RuntimeError] Line 12: Division by zero
+[Kuda RuntimeError] Line 5: Index error: list index out of range
 ```
 
 ---

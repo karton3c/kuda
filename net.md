@@ -1,5 +1,5 @@
 # Kuda — Neural Networks & DataBuilder
-**Version 0.2.8**
+**Version 0.2.9**
 
 This document covers the `net` block, all training parameters, activations, DataBuilder datasets, and `data.cust`.
 
@@ -14,12 +14,14 @@ This document covers the `net` block, all training parameters, activations, Data
 5. [Weight initialization](#weight-initialization)
 6. [predict()](#predict)
 7. [Saving & loading weights](#saving--loading-weights)
-8. [Multiple nets](#multiple-nets)
-9. [DataBuilder](#databuilder)
-10. [data.cust — custom targets](#datacust--custom-targets)
-11. [Manual datasets (~inputs / ~targets)](#manual-datasets-inputs--targets)
-12. [Tips & troubleshooting](#tips--troubleshooting)
-13. [Examples](#examples)
+8. [Loading without training](#loading-without-training)
+9. [Multiple nets](#multiple-nets)
+10. [DataBuilder](#databuilder)
+11. [data.cust — custom targets](#datacust--custom-targets)
+12. [Manual datasets (~inputs / ~targets)](#manual-datasets-inputs--targets)
+13. [Dynamic datasets](#dynamic-datasets)
+14. [Tips & troubleshooting](#tips--troubleshooting)
+15. [Examples](#examples)
 
 ---
 
@@ -170,6 +172,15 @@ Stop training when average loss goes below this value:
 
 If not set, trains for all `~epochs`.
 
+### ~verbose — silence training output
+
+```kuda
+~verbose = False   # no output at all during training
+~verbose = True    # default, uses ~log interval
+```
+
+`~verbose = False` completely silences all epoch prints and early stop messages. Useful when you don't want training noise in your program output.
+
 ---
 
 ## Activations
@@ -212,7 +223,22 @@ out(str(result))             # raw float
 out(str(round(result)))      # rounded to 0 or 1
 ```
 
-For multi-output nets, `.predict()` returns a list of all output values.
+For multi-output nets (last layer > 1), `.predict()` returns a list of all output values:
+
+```kuda
+net classifier:
+    ~inputs = inputs
+    ~targets = targets
+    ~layers = [2, 8, 2]    # 2 outputs
+    ~epochs = 3000
+    ~stop = 0.001
+    ~verbose = False
+
+result = classifier.predict([0.0, 1.0])
+out(str(result))         # e.g. [0.95, 0.02]
+out(str(result[0]))      # first output
+out(str(result[1]))      # second output
+```
 
 **The input list must match the input layer size.** If you used `data.binary(4)` then inputs are 4 floats.
 
@@ -301,6 +327,45 @@ The saved file looks like this:
 ```
 
 Files saved in C mode and interpreter mode are compatible with each other.
+
+---
+
+## Loading without training
+
+Use `~name = net.load("file.json")` to load a trained net without writing a `net` block at all — no training happens:
+
+```kuda
+~xor = net.load("xor.json")
+
+out(str(round(xor.predict([0.0, 1.0]))))   # 1
+out(str(round(xor.predict([1.0, 1.0]))))   # 0
+```
+
+This works in both C mode and interpreter mode. The file must have been saved with `.write()` previously.
+
+**Typical workflow:**
+
+```kuda
+# train.kuda — run once
+net xor:
+    ~data = data.binary(2).sequential.xor
+    ~layers = [auto, 8, 1]
+    ~lr = 0.1
+    ~epochs = 3000
+    ~stop = 0.001
+    ~verbose = False
+
+xor.write("xor.json")
+out("Saved.")
+```
+
+```kuda
+# predict.kuda — fast, no training
+~xor = net.load("xor.json")
+
+out(str(round(xor.predict([0.0, 1.0]))))
+out(str(round(xor.predict([1.0, 1.0]))))
+```
 
 ---
 
@@ -519,6 +584,34 @@ The input layer size must match the length of each input row. You cannot use `au
 
 ---
 
+## Dynamic datasets
+
+You can build `~inputs` and `~targets` dynamically at runtime using loops, then pass them to a net. This works in both C mode and interpreter mode.
+
+```kuda
+inputs = []
+targets = []
+
+each i in range(4):
+    each j in range(4):
+        inputs.add([float(i), float(j)])
+        targets.add([float((int(i) + int(j)) % 2)])
+
+net mynet:
+    ~inputs = inputs
+    ~targets = targets
+    ~layers = [2, 8, 1]
+    ~epochs = 3000
+    ~stop = 0.001
+    ~verbose = False
+
+out(str(round(mynet.predict([0.0, 1.0]))))
+```
+
+**Note:** When using dynamic inputs, you must provide explicit layer sizes — `auto` cannot be used because the input size is unknown at compile time.
+
+---
+
 ## Tips & troubleshooting
 
 ### Network not learning
@@ -693,4 +786,4 @@ out("1,1 = " + str(round(xor.predict([1.0, 1.0]))))
 
 ---
 
-*Kuda v0.2.8 — open source*
+*Kuda v0.2.9 — open source*

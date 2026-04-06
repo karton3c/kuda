@@ -1,4 +1,4 @@
-# Kuda v0.2.8 - C Code Generator with Full Builtins Support
+# Kuda v0.2.9 - C Code Generator with Full Builtins Support
 from parser import *
 import math
 
@@ -347,7 +347,7 @@ class CGenerator:
 
     def _runtime(self):
         return [
-            '/* Kuda v0.2.8 Runtime - Full Featured */',
+            '/* Kuda v0.2.9 Runtime - Full Featured */',
             '#define MAX_STR  4096',
             '#define MAX_MAT  512',
             '#define MAX_LIST 1024',
@@ -1258,6 +1258,8 @@ class CGenerator:
                                         and attr_node.obj.name in self._net_info):
                                     n_out = self._net_info[attr_node.obj.name].get('n_outputs', 1)
                                     found[node.name] = 'list' if n_out > 1 else 'double'
+                                elif attr_node.attr == 'cut':
+                                    found[node.name] = 'strlist'
                                 else:
                                     found.setdefault(node.name, 'double')
                             else:
@@ -1270,6 +1272,17 @@ class CGenerator:
                                 return False
                             if _is_data_chain2(node.value):
                                 found[node.name] = 'list'
+                            else:
+                                found.setdefault(node.name, 'double')
+                        elif isinstance(node.value, IndexNode):
+                            # str[idx] -> str, strlist[idx] -> str, list[idx] -> double
+                            obj_node = node.value.obj
+                            if isinstance(obj_node, IdentNode):
+                                otyp = found.get(obj_node.name) or self.vars.get(obj_node.name, 'double')
+                                if otyp in ('str', 'strlist'):
+                                    found[node.name] = 'str'
+                                else:
+                                    found.setdefault(node.name, 'double')
                             else:
                                 found.setdefault(node.name, 'double')
                         else:
@@ -1616,6 +1629,12 @@ class CGenerator:
                 return f'((char*)(intptr_t)kuda_list_grab({obj}, (int)({idx})))', 'str'
             if otyp == 'list':
                 return f'kuda_list_grab({obj}, (int)({idx}))', 'double'
+            if otyp == 'str':
+                # str[i] -> single char as heap-allocated string
+                tmp = self._tmp_var()
+                self.emit(f'char {tmp}_ch[2]; {tmp}_ch[0] = {obj}[(int)({idx})]; {tmp}_ch[1] = 0;')
+                self.emit(f'char* {tmp}_s = strdup({tmp}_ch);')
+                return f'{tmp}_s', 'str'
             return f'{obj}[(int)({idx})]', 'double'
         return '0', 'double'
 
@@ -2010,7 +2029,7 @@ class CGenerator:
                 a,_=args_eval[0];b,_=args_eval[1]; return f'kuda_swap({obj_val},{a},{b})', 'str'
             if method == 'cut':
                 delim = args_eval[0][0] if args_eval else '" "'
-                return f'kuda_cut({obj_val}, {delim})', 'list'
+                return f'kuda_cut({obj_val}, {delim})', 'strlist'
 
         if obj_typ == 'list':
             if method == 'add' and args_eval:

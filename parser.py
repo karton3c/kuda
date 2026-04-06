@@ -99,6 +99,12 @@ class UseNode:
         self.filepath = filepath  # Kuda file path (e.g. 'utils.kuda')
         self.absolute = absolute  # True if @"path" (relative to CWD)
 
+class ExternNode:
+    def __init__(self, name, params, ret_type='double'):
+        self.name = name        # nazwa funkcji C
+        self.params = params    # lista (nazwa, typ) np. [('x', 'double'), ('s', 'str')]
+        self.ret_type = ret_type  # 'double', 'str', 'void'
+
 class OutNode:
     def __init__(self, value): self.value = value
 
@@ -232,6 +238,8 @@ class Parser:
             return self.parse_model()
         if tok.type == 'net':
             return self.parse_net()
+        if tok.type == 'extern':
+            return self.parse_extern()
 
         # ~name = net.load("file.json") — top-level net load
         if tok.type == TT_TILDE:
@@ -295,6 +303,41 @@ class Parser:
             alias = self.expect_identifier()
         self._end_statement()
         return UseNode(name, alias)
+
+    def parse_extern(self):
+        # extern [str|void] nazwa(typ arg, typ arg, ...)
+        # Przyklad: extern void SDL_Init(double flags)
+        # Przyklad: extern str SDL_GetError()
+        # Przyklad: extern SDL_Delay(double ms)   # domyslnie double return
+        self.advance()  # 'extern'
+
+        # opcjonalny typ zwracany
+        ret_type = 'double'
+        if self.current().type == TT_IDENT and self.current().value in ('void', 'str', 'double', 'int'):
+            ret_type = self.advance().value
+
+        name = self.expect(TT_IDENT).value
+        self.expect(TT_LPAREN)
+
+        params = []
+        while self.current().type != TT_RPAREN:
+            # typ parametru
+            if self.current().type == TT_IDENT and self.current().value in ('double', 'str', 'int', 'void'):
+                ptype = self.advance().value
+            else:
+                ptype = 'double'
+            # nazwa parametru (opcjonalna)
+            if self.current().type == TT_IDENT:
+                pname = self.advance().value
+            else:
+                pname = f'arg{len(params)}'
+            params.append((pname, ptype))
+            if self.current().type == TT_COMMA:
+                self.advance()
+
+        self.expect(TT_RPAREN)
+        self._end_statement()
+        return ExternNode(name, params, ret_type)
 
     def parse_out(self):
         self.advance()  # 'out'

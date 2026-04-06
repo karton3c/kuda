@@ -295,6 +295,10 @@ class Interpreter:
         if isinstance(node, UseNode):
             return self.exec_use(node, env)
 
+        if isinstance(node, ExternNode):
+            # W interpreterze ignorujemy extern - dziala tylko w C mode
+            return None
+
         # Przypisanie
         if isinstance(node, AssignNode):
             return self.exec_assign(node, env)

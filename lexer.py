@@ -51,6 +51,7 @@ KEYWORDS = {
     # Note: 'self' is intentionally NOT a keyword - it should be a regular identifier
     'break', 'continue',
     'net',
+    'extern',
 }
 
 class Token:

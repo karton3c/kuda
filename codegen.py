@@ -33,6 +33,8 @@ class CGenerator:
         self.includes = set()
         self.models = {}
         self.link_flags = []  # extra gcc flags collected from use statements
+        self.extern_decls = []  # extern C function declarations
+        self.extern_funcs = {}  # name -> ret_type for extern functions
 
     def fresh_tmp(self):
         self.tmp_count += 1
@@ -197,6 +199,9 @@ class CGenerator:
         final = []
         final.extend(sorted(self.includes))
         final.append('')
+        if self.extern_decls:
+            final.extend(self.extern_decls)
+            final.append('')
         final.extend(runtime)
         final.append('')
         final.extend(model_code)
@@ -1423,6 +1428,18 @@ class CGenerator:
             for s in node.try_body: self._gen_stmt(s)
         elif isinstance(node, BreakNode): self.emit('break;')
         elif isinstance(node, ContinueNode): self.emit('continue;')
+        elif isinstance(node, ExternNode):
+            # Generujemy deklaracje extern w C
+            # ret_type mapowanie
+            c_ret = {'double': 'double', 'str': 'char*', 'void': 'void', 'int': 'double'}.get(node.ret_type, 'double')
+            c_params = []
+            for pname, ptype in node.params:
+                c_ptype = {'double': 'double', 'str': 'char*', 'void': 'void', 'int': 'int'}.get(ptype, 'double')
+                c_params.append(f'{c_ptype} {pname}')
+            params_str = ', '.join(c_params) if c_params else 'void'
+            self.extern_decls.append(f'extern {c_ret} {node.name}({params_str});')
+            # Rejestrujemy funkcje zeby CallNode wiedzial jaki typ zwraca
+            self.extern_funcs[node.name] = node.ret_type
         elif isinstance(node, UseNode):
             # C library: use sdl2, use gl, etc.
             if node.module and node.filepath is None:
@@ -1881,6 +1898,13 @@ class CGenerator:
             else:
                 arg_parts.append(f'(double)({v})')
         args_str = ', '.join(arg_parts)
+        # Sprawdz czy to extern funkcja
+        if name in self.extern_funcs:
+            ext_ret = self.extern_funcs[name]
+            c_ret = {'double': 'double', 'str': 'str', 'void': 'double', 'int': 'double'}.get(ext_ret, 'double')
+            # dla extern przekazujemy argumenty bez castowania
+            ext_args = ', '.join(v for v, t in args_eval)
+            return f'{name}({ext_args})', c_ret
         # Return the function's known return type
         ret_type = self.func_return_types.get(name, 'double')
         return f'{c_name}({args_str})', ret_type

@@ -11,10 +11,10 @@ from lexer import Lexer, LexerError
 from parser import Parser, ParseError
 from interpreter import Interpreter, RuntimeError_
 
-VERSION = "0.2.9"
+VERSION = "0.2.8"
 
 HELP = """
-Kuda v0.2.9 - Fast ML language that compiles to C
+Kuda v0.2.8 - Fast ML language that compiles to C
 
 Usage:
   kuda <file.kuda>            Run file (compiles to C, super fast!)
@@ -38,11 +38,9 @@ def parse_source(source):
     return parser.parse()
 
 def run_interpreted(path):
-    import os
     with open(path, 'r', encoding='utf-8') as f:
         source = f.read()
     interpreter = Interpreter()
-    interpreter._current_file = os.path.abspath(path)
     try:
         ast = parse_source(source)
         interpreter.run(ast)
@@ -81,7 +79,7 @@ def compile_to_binary(path, output=None, silent=False):
     if output is None:
         output = os.path.splitext(path)[0]
 
-    cmd = ['gcc', '-O2', '-o', output, c_file.name, '-lm']
+    cmd = ['gcc', '-O2', '-o', output, c_file.name, '-lm'] + gen.link_flags
     result = subprocess.run(cmd, capture_output=True, text=True)
     os.unlink(c_file.name)
 

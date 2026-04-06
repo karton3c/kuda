@@ -1,4 +1,4 @@
-# Kuda v0.2.9 - C Code Generator with Full Builtins Support
+# Kuda v0.2.8 - C Code Generator with Full Builtins Support
 from parser import *
 import math
 
@@ -8,6 +8,22 @@ class CompileError(Exception):
 
 
 class CGenerator:
+    # Known C libraries: use name -> gcc flags
+    C_LIBS = {
+        'sdl2':    ['-lSDL2', '-I/usr/include/SDL2'],
+        'SDL2':    ['-lSDL2', '-I/usr/include/SDL2'],
+        'gl':      ['-lGL'],
+        'GL':      ['-lGL'],
+        'glew':    ['-lGLEW'],
+        'GLEW':    ['-lGLEW'],
+        'glfw':    ['-lglfw'],
+        'openal':  ['-lopenal'],
+        'pthread': ['-lpthread'],
+        'curl':    ['-lcurl'],
+        'sqlite3': ['-lsqlite3'],
+        'ncurses': ['-lncurses'],
+    }
+
     def __init__(self):
         self.lines = []
         self.indent = 0
@@ -15,7 +31,8 @@ class CGenerator:
         self.vars = {}
         self.functions = {}
         self.includes = set()
-        self.models = {}  # model_name -> {field_name: type}
+        self.models = {}
+        self.link_flags = []  # extra gcc flags collected from use statements
 
     def fresh_tmp(self):
         self.tmp_count += 1
@@ -330,7 +347,7 @@ class CGenerator:
 
     def _runtime(self):
         return [
-            '/* Kuda v0.2.9 Runtime - Full Featured */',
+            '/* Kuda v0.2.8 Runtime - Full Featured */',
             '#define MAX_STR  4096',
             '#define MAX_MAT  512',
             '#define MAX_LIST 1024',
@@ -1393,7 +1410,15 @@ class CGenerator:
             for s in node.try_body: self._gen_stmt(s)
         elif isinstance(node, BreakNode): self.emit('break;')
         elif isinstance(node, ContinueNode): self.emit('continue;')
-        elif isinstance(node, UseNode): pass
+        elif isinstance(node, UseNode):
+            # C library: use sdl2, use gl, etc.
+            if node.module and node.filepath is None:
+                flags = self.C_LIBS.get(node.module)
+                if flags:
+                    for f in flags:
+                        if f not in self.link_flags:
+                            self.link_flags.append(f)
+                # Python modules are silently ignored in C mode
         else:
             try:
                 val, _ = self._gen_expr(node)

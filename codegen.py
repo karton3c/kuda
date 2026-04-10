@@ -35,6 +35,7 @@ class CGenerator:
         self.link_flags = []  # extra gcc flags collected from use statements
         self.extern_decls = []  # extern C function declarations
         self.extern_funcs = {}  # name -> ret_type for extern functions
+        self.extra_c_files = []  # .c files to compile alongside main
 
     def fresh_tmp(self):
         self.tmp_count += 1
@@ -1429,8 +1430,12 @@ class CGenerator:
         elif isinstance(node, BreakNode): self.emit('break;')
         elif isinstance(node, ContinueNode): self.emit('continue;')
         elif isinstance(node, ExternNode):
-            # Generujemy deklaracje extern w C
-            # ret_type mapowanie
+            # extern "plik.c" — dołącz plik C do kompilacji
+            if node.c_file is not None:
+                if node.c_file not in self.extra_c_files:
+                    self.extra_c_files.append(node.c_file)
+                return
+            # extern typ nazwa(params) — deklaracja funkcji
             c_ret = {'double': 'double', 'str': 'char*', 'void': 'void', 'int': 'double'}.get(node.ret_type, 'double')
             c_params = []
             for pname, ptype in node.params:
@@ -1438,7 +1443,6 @@ class CGenerator:
                 c_params.append(f'{c_ptype} {pname}')
             params_str = ', '.join(c_params) if c_params else 'void'
             self.extern_decls.append(f'extern {c_ret} {node.name}({params_str});')
-            # Rejestrujemy funkcje zeby CallNode wiedzial jaki typ zwraca
             self.extern_funcs[node.name] = node.ret_type
         elif isinstance(node, UseNode):
             # C library: use sdl2, use gl, etc.

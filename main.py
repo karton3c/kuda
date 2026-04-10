@@ -79,7 +79,14 @@ def compile_to_binary(path, output=None, silent=False):
     if output is None:
         output = os.path.splitext(path)[0]
 
-    cmd = ['gcc', '-O2', '-o', output, c_file.name, '-lm'] + gen.link_flags
+    cmd = ['gcc', '-O2', '-o', output, c_file.name]
+    # Add extra .c files from extern "file.c" statements
+    src_dir = os.path.dirname(os.path.abspath(path))
+    for cf in gen.extra_c_files:
+        if not os.path.isabs(cf):
+            cf = os.path.join(src_dir, cf)
+        cmd.append(cf)
+    cmd += ['-lm'] + gen.link_flags
     result = subprocess.run(cmd, capture_output=True, text=True)
     os.unlink(c_file.name)
 

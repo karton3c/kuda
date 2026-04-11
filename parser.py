@@ -82,6 +82,12 @@ class GiveNode:
 class YieldNode:
     def __init__(self, value): self.value = value
 
+class CheckNode:
+    def __init__(self, expr, cases, else_body):
+        self.expr      = expr       # wyrażenie do sprawdzenia
+        self.cases     = cases      # lista (wartość, ciało)
+        self.else_body = else_body  # ciało dla 'other' lub None
+
 class ModelNode:
     def __init__(self, name, body): self.name = name; self.body = body
 
@@ -269,6 +275,9 @@ class Parser:
             return self.parse_give()
         if tok.type == 'yield':
             return self.parse_yield()
+
+        if tok.type == 'check':
+            return self.parse_check()
 
         if tok.type == 'try':
             return self.parse_try()
@@ -511,6 +520,41 @@ class Parser:
         value = self.parse_expr()
         self._end_statement()
         return YieldNode(value)
+
+    def parse_check(self):
+        self.advance()  # 'check'
+        expr = self.parse_expr()
+        self.expect(TT_COLON)
+        self._end_statement()
+        self.expect(TT_INDENT)
+
+        cases = []
+        else_body = None
+
+        while self.current().type != TT_DEDENT and self.current().type != TT_EOF:
+            tok = self.current()
+
+            if tok.type == 'is':
+                self.advance()  # 'is'
+                value = self.parse_expr()
+                self.expect(TT_COLON)
+                self._end_statement()
+                body = self.parse_block()
+                cases.append((value, body))
+
+            elif tok.type == 'other':
+                self.advance()  # 'other'
+                self.expect(TT_COLON)
+                self._end_statement()
+                else_body = self.parse_block()
+
+            else:
+                break
+
+        if self.current().type == TT_DEDENT:
+            self.advance()
+
+        return CheckNode(expr, cases, else_body)
 
     def parse_try(self):
         self.advance()  # 'try'

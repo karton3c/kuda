@@ -384,6 +384,9 @@ class Interpreter:
         if isinstance(node, TryNode):
             return self.exec_try(node, env)
 
+        if isinstance(node, CheckNode):
+            return self.exec_check(node, env)
+
         # break/continue
         if isinstance(node, BreakNode):
             raise BreakSignal()
@@ -467,6 +470,15 @@ class Interpreter:
     def exec_if(self, node, env):
         for cond, body in node.cases:
             if self.eval(cond, env):
+                self.exec_block(body, env)
+                return
+        if node.else_body:
+            self.exec_block(node.else_body, env)
+
+    def exec_check(self, node, env):
+        val = self.eval(node.expr, env)
+        for case_val, body in node.cases:
+            if self.eval(case_val, env) == val:
                 self.exec_block(body, env)
                 return
         if node.else_body:

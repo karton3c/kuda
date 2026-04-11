@@ -53,6 +53,7 @@ KEYWORDS = {
     'net',
     'extern',
     'yield',
+    'check', 'is',
 }
 
 class Token:

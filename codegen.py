@@ -1434,6 +1434,8 @@ class CGenerator:
                 self.emit(f'return (double)({val});')
         elif isinstance(node, TryNode):
             for s in node.try_body: self._gen_stmt(s)
+        elif isinstance(node, CheckNode):
+            self._gen_check(node)
         elif isinstance(node, BreakNode): self.emit('break;')
         elif isinstance(node, ContinueNode): self.emit('continue;')
         elif isinstance(node, ExternNode):
@@ -1522,6 +1524,48 @@ class CGenerator:
             for s in node.else_body: self._gen_stmt(s)
             self.indent -= 1
         self.emit('}')
+
+    def _gen_check(self, node):
+        """Generuje check/is jako serię if/else if w C."""
+        expr_val, expr_typ = self._gen_expr(node.expr)
+        # Zachowaj wartość w tymczasowej zmiennej żeby nie ewaluować wielokrotnie
+        tmp = self.fresh_tmp()
+        if expr_typ == 'str':
+            self.emit(f'char* {tmp} = {expr_val};')
+        else:
+            self.emit(f'double {tmp} = {expr_val};')
+
+        first = True
+        for case_val, body in node.cases:
+            cv, ct = self._gen_expr(case_val)
+            # Porównanie — stringi przez strcmp, liczby przez ==
+            if expr_typ == 'str' or ct == 'str':
+                cond = f'strcmp({tmp}, {cv}) == 0'
+            else:
+                cond = f'{tmp} == {cv}'
+
+            if first:
+                self.emit(f'if ({cond}) {{')
+                first = False
+            else:
+                self.emit(f'}} else if ({cond}) {{')
+            self.indent += 1
+            for s in body:
+                self._gen_stmt(s)
+            self.indent -= 1
+
+        if node.else_body:
+            if first:
+                self.emit('{')  # tylko other bez żadnego is
+            else:
+                self.emit('} else {')
+            self.indent += 1
+            for s in node.else_body:
+                self._gen_stmt(s)
+            self.indent -= 1
+
+        if not first or node.else_body:
+            self.emit('}')
 
     def _gen_repeat(self, node):
         count, _ = self._gen_expr(node.count)

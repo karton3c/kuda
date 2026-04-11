@@ -52,6 +52,7 @@ KEYWORDS = {
     'break', 'continue',
     'net',
     'extern',
+    'yield',
 }
 
 class Token:

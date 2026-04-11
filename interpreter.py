@@ -9,6 +9,10 @@ from data_builder import DataBuilder
 class GiveSignal(Exception):
     def __init__(self, value): self.value = value
 
+class YieldSignal(Exception):
+    """Rzucany przez yield — przechwytywany przez KudaGenerator."""
+    def __init__(self, value): self.value = value
+
 class BreakSignal(Exception):
     pass
 
@@ -368,6 +372,11 @@ class Interpreter:
         if isinstance(node, GiveNode):
             value = self.eval(node.value, env)
             raise GiveSignal(value)
+
+        # yield — rzuca YieldSignal, przechwytywany przez KudaGenerator
+        if isinstance(node, YieldNode):
+            value = self.eval(node.value, env)
+            raise YieldSignal(value)
 
         # try/fail
         if isinstance(node, TryNode):
@@ -1214,10 +1223,29 @@ class Interpreter:
 
         raise RuntimeError_(f"'{func}' is not callable")
 
-    def _call_function(self, func, args):
-        call_env = Environment(func.env)
+    def _has_yield(self, stmts):
+        """Rekurencyjnie sprawdza czy lista instrukcji zawiera yield."""
+        for stmt in stmts:
+            if isinstance(stmt, YieldNode):
+                return True
+            # sprawdź ciała zagnieżdżonych bloków
+            for attr in ('body', 'else_body'):
+                sub = getattr(stmt, attr, None)
+                if isinstance(sub, list) and self._has_yield(sub):
+                    return True
+            # if: cases = lista (warunek, ciało)
+            if hasattr(stmt, 'cases'):
+                for _, body in stmt.cases:
+                    if self._has_yield(body):
+                        return True
+        return False
 
-        # Mapuj parametry on argumenty
+    def _call_function(self, func, args):
+        # Jeśli funkcja zawiera yield — zwróć generator zamiast wykonywać
+        if self._has_yield(func.body):
+            return KudaGenerator(func, args, self)
+
+        call_env = Environment(func.env)
         for i, param in enumerate(func.params):
             if i < len(args):
                 call_env.set(param, args[i])
@@ -1242,6 +1270,141 @@ class Interpreter:
         return str(val)
 
 # === Kuda Standard Library Modules ===
+
+class KudaGenerator:
+    """
+    Generator Kudy — leniwe wykonywanie funkcji zawierającej yield.
+    Działa jako własny mini-interpreter AST oparty na Python generatorach,
+    dzięki czemu yield propaguje naturalnie przez yield from bez patchowania
+    głównego interpretera.
+    """
+
+    def __init__(self, func, args, interp):
+        self.func   = func
+        self.args   = args
+        self.interp = interp
+        self._iter  = self._run()
+
+    def _run(self):
+        """Tworzy środowisko i startuje wykonanie ciała funkcji."""
+        call_env = Environment(self.func.env)
+        for i, param in enumerate(self.func.params):
+            call_env.set(param, self.args[i] if i < len(self.args) else None)
+        yield from self._stmts(self.func.body, call_env)
+
+    # ------------------------------------------------------------------
+    # Mini-interpreter — obsługuje każdy węzeł AST który może zawierać yield
+    # ------------------------------------------------------------------
+
+    def _stmts(self, stmts, env):
+        for stmt in stmts:
+            yield from self._stmt(stmt, env)
+
+    def _stmt(self, node, env):
+        """Wykonuje jeden węzeł — jeśli może zawierać yield, idzie krokowo."""
+
+        # yield — oddaj wartość wywołującemu
+        if isinstance(node, YieldNode):
+            yield self.interp.eval(node.value, env)
+            return
+
+        # give / return — zakończ generator
+        if isinstance(node, GiveNode):
+            return
+
+        # break/continue — propaguj jako wyjątek
+        if isinstance(node, BreakNode):
+            raise BreakSignal()
+        if isinstance(node, ContinueNode):
+            raise ContinueSignal()
+
+        # if / othif / other
+        if isinstance(node, IfNode):
+            for cond, body in node.cases:
+                if self.interp.eval(cond, env):
+                    yield from self._stmts(body, env)
+                    return
+            if node.else_body:
+                yield from self._stmts(node.else_body, env)
+            return
+
+        # each (for each) — zwykła zmienna
+        if isinstance(node, EachNode):
+            iterable = self.interp.eval(node.iterable, env)
+            for item in iterable:
+                env.set(node.var, item)
+                try:
+                    yield from self._stmts(node.body, env)
+                except BreakSignal:
+                    return
+                except ContinueSignal:
+                    continue
+            return
+
+        # each z rozpakowaniem (x, y in ...)
+        if isinstance(node, EachUnpackNode):
+            iterable = self.interp.eval(node.iterable, env)
+            for item in iterable:
+                vals = item if isinstance(item, (list, tuple)) else [item]
+                for i, var in enumerate(node.vars):
+                    env.set(var, vals[i] if i < len(vals) else None)
+                try:
+                    yield from self._stmts(node.body, env)
+                except BreakSignal:
+                    return
+                except ContinueSignal:
+                    continue
+            return
+
+        # til (while)
+        if isinstance(node, TilNode):
+            while self.interp.eval(node.condition, env):
+                try:
+                    yield from self._stmts(node.body, env)
+                except BreakSignal:
+                    return
+                except ContinueSignal:
+                    continue
+            return
+
+        # repeat N
+        if isinstance(node, RepeatNode):
+            n = int(self.interp.eval(node.count, env))
+            for _ in range(n):
+                try:
+                    yield from self._stmts(node.body, env)
+                except BreakSignal:
+                    return
+                except ContinueSignal:
+                    continue
+            return
+
+        # Wszystko inne (przypisania, out, wywołania funkcji itp.)
+        # — wykonaj przez główny interpreter, yield tu nie wystąpi
+        self.interp.exec(node, env)
+
+    # ------------------------------------------------------------------
+    # Interfejs iteratora
+    # ------------------------------------------------------------------
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        return next(self._iter)
+
+    def get_attr(self, name):
+        if name == 'collect':
+            # .collect() — zwraca wszystkie wartości jako listę
+            return lambda args: list(self._run())
+        if name == 'next':
+            # .next() — następna wartość lub None
+            return lambda args: next(self._iter, None)
+        raise AttributeError(f"generator has no attribute '{name}'")
+
+    def __repr__(self):
+        return '<kuda generator>'
+
 
 class _KudaStdlibModule:
     """Base class for stdlib modules — provides get_attr dispatch."""

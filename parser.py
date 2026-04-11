@@ -79,6 +79,9 @@ class AnonFunNode:
 class GiveNode:
     def __init__(self, value): self.value = value
 
+class YieldNode:
+    def __init__(self, value): self.value = value
+
 class ModelNode:
     def __init__(self, name, body): self.name = name; self.body = body
 
@@ -264,6 +267,8 @@ class Parser:
 
         if tok.type in ('give', 'return'):
             return self.parse_give()
+        if tok.type == 'yield':
+            return self.parse_yield()
 
         if tok.type == 'try':
             return self.parse_try()
@@ -500,6 +505,12 @@ class Parser:
         value = self.parse_expr()
         self._end_statement()
         return GiveNode(value)
+
+    def parse_yield(self):
+        self.advance()  # 'yield'
+        value = self.parse_expr()
+        self._end_statement()
+        return YieldNode(value)
 
     def parse_try(self):
         self.advance()  # 'try'

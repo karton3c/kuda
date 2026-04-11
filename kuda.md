@@ -29,8 +29,9 @@ Kuda is a programming language with Python-like syntax that compiles to C for fa
 20. [DataBuilder](#databuilder)
 21. [Importing Files](#importing-files)
 22. [Python Libraries](#python-libraries)
-23. [Error Handling](#error-handling)
-24. [Full Examples](#full-examples)
+23. [C Libraries & extern](#c-libraries--extern)
+24. [Error Handling](#error-handling)
+25. [Full Examples](#full-examples)
 
 ---
 
@@ -332,6 +333,7 @@ max(10, 20)         # 20
 min(10, 20)         # 10
 rand(1, 100)        # random integer
 rand_float()        # random float 0.0-1.0
+rand_normal(0, 1)   # random float from normal distribution (mean, std)
 log(2.71828)        # natural log
 exp(1)              # e^1
 sum([1,2,3])        # 6
@@ -388,6 +390,13 @@ mat_mean(m)
 sigmoid(x)
 relu(x)
 tanh(x)
+leaky(x)        # leaky relu: x if x > 0 else 0.01 * x
+
+# Activation derivatives (scalar) — for manual backprop
+sigmoid_d(x)    # sigmoid derivative: x * (1 - x)
+tanh_d(x)       # tanh derivative: 1 - x * x
+relu_d(x)       # relu derivative: 1 if x > 0 else 0
+leaky_d(x)      # leaky relu derivative: 1 if x > 0 else 0.01
 
 # Activations (matrix)
 mat_sigmoid(m)
@@ -526,6 +535,47 @@ out(str(np.mean(arr)))
 ```
 
 > Requires `kuda py file.kuda`.
+
+---
+
+## C Libraries & extern
+
+Link system C libraries with `use`:
+
+```kuda
+use sdl2      # adds -lSDL2 to gcc
+use gl        # adds -lGL
+use pthread   # adds -lpthread
+use curl      # adds -lcurl
+use sqlite3   # adds -lsqlite3
+```
+
+Include external C source files with `extern`:
+
+```kuda
+extern "wrapper.c"   # compile this .c file alongside your program
+```
+
+Declare C functions for use in Kuda:
+
+```kuda
+extern void   SDL_Init(double flags)
+extern void   SDL_Delay(double ms)
+extern str    SDL_GetError()
+extern double my_compute(double x, double y)
+```
+
+**Full example — calling C from Kuda:**
+
+```kuda
+use sdl2
+extern "sdl_wrapper.c"
+extern void   kuda_window_open(double w, double h)
+extern void   kuda_window_close()
+
+kuda_window_open(800.0, 600.0)
+kuda_window_close()
+```
 
 ---
 

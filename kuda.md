@@ -532,11 +532,46 @@ out(str(np.mean(arr)))
 ## Error Handling
 
 ```kuda
+# basic — catch any error
 try:
     result = int("not a number")
 fail:
     out("Something went wrong!")
+
+# with error message
+try:
+    x = int("abc")
+fail e:
+    out("Error: " + e)
+
+# with error type
+try:
+    y = 1.0 / 0.0
+fail ZeroDivision e:
+    out("Division by zero: " + e)
+
+# multiple clauses
+try:
+    lista = [1.0, 2.0]
+    z = lista[10]
+fail IndexError e:
+    out("Bad index: " + e)
+fail e:
+    out("Other error: " + e)
 ```
+
+**Available error types:**
+
+| Type | Catches |
+|------|---------|
+| `TypeError` | wrong type in operation |
+| `ValueError` | invalid value conversion |
+| `IndexError` | list index out of range |
+| `KeyError` | dict key not found |
+| `ZeroDivision` | division by zero |
+| `FileError` | file not found / IO error |
+| `RuntimeError` | general runtime error |
+| `AttributeError` | attribute not found |
 
 Runtime errors include the line number:
 

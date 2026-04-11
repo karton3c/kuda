@@ -110,7 +110,12 @@ class OutNode:
     def __init__(self, value): self.value = value
 
 class TryNode:
-    def __init__(self, try_body, fail_body): self.try_body = try_body; self.fail_body = fail_body
+    def __init__(self, try_body, fail_clauses):
+        self.try_body = try_body
+        # fail_clauses: list of (error_type, var_name, body)
+        # error_type: str like 'TypeError', 'ValueError', or None = catch all
+        # var_name: str or None
+        self.fail_clauses = fail_clauses
 
 class BreakNode:
     pass
@@ -501,11 +506,37 @@ class Parser:
         self.expect(TT_COLON)
         self._end_statement()
         try_body = self.parse_block()
-        self.expect('fail')
-        self.expect(TT_COLON)
-        self._end_statement()
-        fail_body = self.parse_block()
-        return TryNode(try_body, fail_body)
+
+        fail_clauses = []
+        while self.current().type == 'fail':
+            self.advance()  # 'fail'
+
+            error_type = None
+            var_name = None
+
+            # peek: fail TypeError e:  /  fail e:  /  fail:
+            tok = self.current()
+            if tok.type == TT_IDENT:
+                next_tok = self.tokens[self.pos + 1] if self.pos + 1 < len(self.tokens) else None
+                # fail TypeError e:  — starts with capital = error type
+                if tok.value[0].isupper():
+                    error_type = self.advance().value
+                    # optional var name
+                    if self.current().type == TT_IDENT:
+                        var_name = self.advance().value
+                else:
+                    # fail e: — just var name, no type
+                    var_name = self.advance().value
+
+            self.expect(TT_COLON)
+            self._end_statement()
+            body = self.parse_block()
+            fail_clauses.append((error_type, var_name, body))
+
+        if not fail_clauses:
+            raise ParseError("try without fail", self.current().line)
+
+        return TryNode(try_body, fail_clauses)
 
     def parse_assign_or_expr(self):
         expr = self.parse_expr()

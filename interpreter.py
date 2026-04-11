@@ -765,12 +765,62 @@ class Interpreter:
         env.set(node.name, constructor)
 
     def exec_try(self, node, env):
+        ERROR_TYPES = {
+            'TypeError':     TypeError,
+            'ValueError':    ValueError,
+            'IndexError':    IndexError,
+            'KeyError':      KeyError,
+            'ZeroDivision':  ZeroDivisionError,
+            'FileError':     (FileNotFoundError, IOError),
+            'RuntimeError':  (RuntimeError_, RuntimeError),
+            'OverflowError': OverflowError,
+            'AttributeError':AttributeError,
+        }
+        # Keywords in RuntimeError_ messages that map to Kuda error types
+        MSG_TYPES = {
+            'ZeroDivision':  ['Division by zero', 'division by zero'],
+            'IndexError':    ['Index error', 'list index out of range', 'index out of range'],
+            'TypeError':     ['Type error on', 'unsupported operand'],
+            'ValueError':    ['invalid literal', 'could not convert'],
+            'FileError':     ['No such file', 'plik nie istnieje', 'nie mozna otworzyc'],
+            'AttributeError':['No attribute', 'has no attribute'],
+        }
         try:
             self.exec_block(node.try_body, env)
         except (GiveSignal, BreakSignal, ContinueSignal):
             raise
-        except Exception:
-            self.exec_block(node.fail_body, env)
+        except Exception as e:
+            matched = False
+            err_msg = str(e)
+            # Clean message for var binding
+            clean_msg = err_msg
+            for prefix in ('[Kuda RuntimeError] ', '[Kuda] '):
+                if clean_msg.startswith(prefix):
+                    clean_msg = clean_msg[len(prefix):]
+                    break
+            import re as _re
+            clean_msg = _re.sub(r'^Line \d+: ', '', clean_msg)
+
+            for error_type, var_name, body in node.fail_clauses:
+                if error_type is not None:
+                    # Try Python exception class match first
+                    expected = ERROR_TYPES.get(error_type)
+                    py_match = expected and isinstance(e, expected)
+                    # Then try message-based match for RuntimeError_
+                    msg_keywords = MSG_TYPES.get(error_type, [])
+                    msg_match = any(kw in err_msg for kw in msg_keywords)
+                    if not py_match and not msg_match:
+                        continue
+                matched = True
+                if var_name:
+                    clause_env = Environment(env)
+                    clause_env.set(var_name, clean_msg)
+                    self.exec_block(body, clause_env)
+                else:
+                    self.exec_block(body, env)
+                break
+            if not matched:
+                raise
 
     # === Ewaluacja wyrażeń ===
 

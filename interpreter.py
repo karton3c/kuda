@@ -205,6 +205,8 @@ class Interpreter:
         # Pliki
         env.set('read',  lambda args: open(args[0], 'r', encoding='utf-8').read())
         env.set('write', lambda args: open(args[0], 'w', encoding='utf-8').write(args[1]))
+        env.set('append', lambda args: open(args[0], 'a', encoding='utf-8').write(args[1]))
+        env.set('readlines', lambda args: open(args[0], 'r', encoding='utf-8').read().splitlines())
 
         # AI - funkcje aktywacji (skalarne, dla list)
         env.set('sigmoid',  lambda args: 1.0 / (1.0 + math.exp(-args[0])))

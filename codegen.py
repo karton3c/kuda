@@ -222,6 +222,7 @@ class CGenerator:
         """
         STR_FUNCS = {'input', 'str', 'caps', 'small', 'trim', 'swap', 'merge', 'read'}
         LIST_FUNCS = {'cut', 'softmax', 'xav', 'he', 'snip', 'pack', 'shuffle'}
+        STRLIST_FUNCS = {'readlines'}
 
         def is_str_expr(node):
             if isinstance(node, StringNode): return True
@@ -258,6 +259,8 @@ class CGenerator:
                         var_types[v] = 'str'
                     elif fname in LIST_FUNCS or self.func_return_types.get(fname) == 'list':
                         var_types[v] = 'list'
+                    elif fname in STRLIST_FUNCS:
+                        var_types[v] = 'strlist'
                     else:
                         var_types.setdefault(v, 'double')
                 elif isinstance(node.value, AttrNode):
@@ -292,6 +295,7 @@ class CGenerator:
         """Scan all statements to find how functions are called and what types they receive."""
         STR_FUNCS = {'input', 'str', 'caps', 'small', 'trim', 'swap', 'merge', 'read'}
         LIST_FUNCS = {'cut', 'softmax', 'xav', 'he', 'snip', 'pack', 'shuffle'}
+        STRLIST_FUNCS = {'readlines'}
 
         def is_str_expr(arg):
             if isinstance(arg, StringNode): return True
@@ -1199,6 +1203,7 @@ class CGenerator:
         found = {}
         STR_FUNCS = {'input', 'str', 'caps', 'small', 'trim', 'swap', 'merge', 'read', 'kuda_concat'}
         LIST_FUNCS2 = {'cut', 'softmax', 'xav', 'he', 'snip', 'pack', 'shuffle'}
+        STRLIST_FUNCS2 = {'readlines'}
 
         def is_str_expr(node):
             """Rekurencyjnie sprawdź czy wyrażenie zwraca string."""
@@ -1254,6 +1259,8 @@ class CGenerator:
                                     found[node.name] = ret if ret != 'double' else 'double'
                                 elif fname in LIST_FUNCS2:
                                     found[node.name] = 'list'
+                                elif fname in STRLIST_FUNCS2:
+                                    found[node.name] = 'strlist'
                                 else:
                                     found.setdefault(node.name, 'double')
                             elif isinstance(node.value.func, AttrNode):
@@ -1850,7 +1857,24 @@ class CGenerator:
             self.emit(f'char* {buf}=malloc(MAX_STR*16); {buf}[0]=0;')
             self.emit(f'FILE* {tmp}=fopen({f},"r"); if({tmp}){{fread({buf},1,MAX_STR*16-1,{tmp});fclose({tmp});}}')
             return buf, 'str'
-
+        if name == 'append':
+            f,_=args_eval[0]; c,_=args_eval[1]; tmp=self.fresh_tmp()
+            self.emit(f'FILE* {tmp}=fopen({f},"a"); if({tmp}){{fprintf({tmp},"%s",{c});fclose({tmp});}}')
+            return '0', 'double'
+        if name == 'readlines':
+            f,_=args_eval[0]; tmp=self.fresh_tmp(); buf=self.fresh_tmp(); lst=self.fresh_tmp()
+            self.emit(f'KList* {lst}=kuda_list_new();')
+            self.emit(f'FILE* {tmp}=fopen({f},"r");')
+            self.emit(f'if({tmp}){{')
+            self.emit(f'    char {buf}[MAX_STR];')
+            self.emit(f'    while(fgets({buf},MAX_STR,{tmp})){{')
+            self.emit('        int _l=strlen(' + buf + '); if(_l>0&&' + buf + '[_l-1]==\'\\n\'){' + buf + '[_l-1]=0;}'  )
+            self.emit(f'        char* _s=malloc(strlen({buf})+1); strcpy(_s,{buf});')
+            self.emit(f'        kuda_list_add_ptr({lst},(void*)_s);')
+            self.emit(f'    }}')
+            self.emit(f'    fclose({tmp});')
+            self.emit(f'}}')
+            return lst, 'strlist'
         # Macierze
         if name == 'Matrix':     r,_=args_eval[0];c,_=args_eval[1]; return f'kuda_mat_new((int)({r}),(int)({c}))', 'matrix'
         if name == 'mat_rand':   r,_=args_eval[0];c,_=args_eval[1]; return f'kuda_mat_rand((int)({r}),(int)({c}))', 'matrix'

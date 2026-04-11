@@ -108,9 +108,26 @@ def run_fast(path):
         from codegen import CGenerator
         _cg = CGenerator()
         # Fallback do interpretera tylko jeśli używa DataBuilder bez net
-        from parser import NetNode
+        from parser import NetNode, YieldNode
         _has_net = any(isinstance(s, NetNode) for s in _ast.statements)
         if _cg._uses_data_builder(_ast) and not _has_net:
+            run_interpreted(path)
+            return
+        # Fallback do interpretera jeśli kod używa yield (C nie obsługuje coroutines)
+        def _ast_has_yield(stmts):
+            for s in stmts:
+                if isinstance(s, YieldNode):
+                    return True
+                for attr in ('body', 'else_body', 'statements'):
+                    sub = getattr(s, attr, None)
+                    if isinstance(sub, list) and _ast_has_yield(sub):
+                        return True
+                if hasattr(s, 'cases'):
+                    for _, body in s.cases:
+                        if _ast_has_yield(body):
+                            return True
+            return False
+        if _ast_has_yield(_ast.statements):
             run_interpreted(path)
             return
     except Exception:

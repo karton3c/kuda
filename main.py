@@ -21,6 +21,7 @@ Usage:
   kuda py <file.kuda>         Run with Python libraries (numpy, etc.)
   kuda build <file.kuda>      Build a standalone binary
   kuda interp <file.kuda>     Interpreter mode (for debugging)
+  kuda repl                   Interactive REPL
   kuda version                Show version
   kuda help                   Show this help
 
@@ -29,6 +30,7 @@ Examples:
   kuda py ml.kuda             # Run with Python libraries
   kuda build game.kuda        # Creates ./game binary
   kuda interp debug.kuda      # Debug mode
+  kuda repl                   # Interactive console
 """
 
 def parse_source(source):
@@ -163,6 +165,73 @@ def check_file(path):
         print(f"[Kuda] File not found: '{path}'")
         sys.exit(1)
 
+def run_repl():
+    from lexer import Lexer, LexerError
+    from parser import Parser, ParseError
+    from interpreter import Interpreter, RuntimeError_
+
+    interp = Interpreter()
+    print(f"Kuda v{VERSION} REPL — type 'exit' or Ctrl+C to quit")
+
+    buf = []  # bufor na wieloliniowe bloki (fun, if, each itp.)
+
+    while True:
+        try:
+            prompt = '... ' if buf else '>>> '
+            try:
+                line = input(prompt)
+            except EOFError:
+                print()
+                break
+
+            if line.strip() in ('exit', 'quit'):
+                break
+
+            buf.append(line)
+            source = '\n'.join(buf)
+
+            # Sprawdź czy blok jest niekompletny (ostatnia niepusta linia kończy się ':')
+            stripped = line.rstrip()
+            if stripped.endswith(':') or (buf and stripped == ''):
+                # Jeśli pusta linia i mamy bufor — próbuj wykonać
+                if stripped == '' and len(buf) > 1:
+                    pass  # spróbujemy wykonać poniżej
+                else:
+                    continue  # czekaj na więcej linii
+
+            # Spróbuj sparsować i wykonać
+            try:
+                tokens = Lexer(source).tokenize()
+                ast    = Parser(tokens).parse()
+                interp.run(ast)
+                buf = []  # sukces — wyczyść bufor
+            except ParseError as e:
+                msg = str(e)
+                # Niekompletny blok — czekaj na więcej linii
+                if 'INDENT' in msg or 'EOF' in msg or 'expected' in msg.lower():
+                    continue
+                print(msg)
+                buf = []
+            except LexerError as e:
+                print(str(e))
+                buf = []
+            except RuntimeError_ as e:
+                print(str(e))
+                buf = []
+            except Exception as e:
+                line_no = interp.current_line
+                prefix  = f'[Kuda] Line {line_no}: ' if line_no else '[Kuda] '
+                print(f'{prefix}{e}')
+                buf = []
+
+        except KeyboardInterrupt:
+            print()
+            if buf:
+                buf = []  # anuluj bufor, nie wychodzi z REPL
+            else:
+                break
+
+
 def main():
     args = sys.argv[1:]
 
@@ -171,6 +240,10 @@ def main():
 
     if args[0] in ('version', '--version', '-v'):
         print(f"Kuda v{VERSION}"); return
+
+    # kuda repl
+    if args[0] == 'repl':
+        run_repl(); return
 
     # kuda py <file.kuda>
     if args[0] == 'py':

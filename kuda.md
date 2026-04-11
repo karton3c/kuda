@@ -17,21 +17,24 @@ Kuda is a programming language with Python-like syntax that compiles to C for fa
 8. [Tuples](#tuples)
 9. [Dictionaries](#dictionaries)
 10. [Control Flow](#control-flow)
-11. [Functions](#functions)
-12. [Anonymous Functions](#anonymous-functions)
-13. [Models (Classes)](#models-classes)
-14. [Math Functions](#math-functions)
-15. [File I/O](#file-io)
-16. [Time](#time)
-17. [Matrix Operations](#matrix-operations)
-18. [ML Functions](#ml-functions)
-19. [Neural Networks (net block)](#neural-networks-net-block)
-20. [DataBuilder](#databuilder)
-21. [Importing Files](#importing-files)
-22. [Python Libraries](#python-libraries)
-23. [C Libraries & extern](#c-libraries--extern)
-24. [Error Handling](#error-handling)
-25. [Full Examples](#full-examples)
+11. [check / is](#check--is)
+12. [Functions](#functions)
+13. [Generators (yield)](#generators-yield)
+14. [Anonymous Functions](#anonymous-functions)
+15. [Models (Classes)](#models-classes)
+16. [Math Functions](#math-functions)
+17. [File I/O](#file-io)
+18. [Time](#time)
+19. [Matrix Operations](#matrix-operations)
+20. [ML Functions](#ml-functions)
+21. [Neural Networks (net block)](#neural-networks-net-block)
+22. [DataBuilder](#databuilder)
+23. [Importing Files](#importing-files)
+24. [Python Libraries](#python-libraries)
+25. [C Libraries & extern](#c-libraries--extern)
+26. [Error Handling](#error-handling)
+27. [REPL](#repl)
+28. [Full Examples](#full-examples)
 
 ---
 
@@ -152,6 +155,8 @@ len(text)                    # 15
 str(42)       # "42"
 int("42")     # 42
 float("3.14") # 3.14
+
+" ".merge(["a", "b", "c"])   # "a b c"  — join list with separator
 ```
 
 ---
@@ -264,6 +269,48 @@ each i in range(10):
 
 ---
 
+## check / is
+
+Match expression against values — like a switch statement:
+
+```kuda
+check x:
+    is 1:
+        out("one")
+    is 2:
+        out("two")
+    other:
+        out("no match")
+```
+
+Works with numbers **and** strings:
+
+```kuda
+lang = "kuda"
+check lang:
+    is "python":
+        out("python!")
+    is "kuda":
+        out("kuda!")
+    other:
+        out("unknown language")
+```
+
+`other` is optional. If no `is` matches and there is no `other`, nothing happens.
+
+```kuda
+check x:
+    is 0:
+        out("zero")
+    is 1:
+        out("one")
+```
+
+`check` compiles to a series of `if/else if` in C — full speed.
+
+
+---
+
 ## Functions
 
 ```kuda
@@ -284,6 +331,56 @@ fun factorial(n):
         give 1
     give n * factorial(n - 1)
 ```
+
+---
+
+## Generators (yield)
+
+A function with `yield` returns a generator — values are produced lazily, one at a time:
+
+```kuda
+fun numbers(n):
+    i = 0
+    til i < n:
+        yield i
+        i += 1
+
+each x in numbers(5):
+    out(str(x))   # 0 1 2 3 4
+```
+
+Generators can be **infinite** — stop them with `break`:
+
+```kuda
+fun fibonacci():
+    a = 0
+    b = 1
+    til True:
+        yield a
+        tmp = a + b
+        a = b
+        b = tmp
+
+each f in fibonacci():
+    out(str(f))
+    if f > 100:
+        break
+```
+
+Use `.collect()` to gather all values into a list:
+
+```kuda
+fun squares(n):
+    each i in range(1, n + 1):
+        yield i * i
+
+lista = squares(5).collect()   # [1, 4, 9, 16, 25]
+```
+
+Works with `if`, `each`, `til`, `repeat`, `break` and `continue` inside the generator body.
+
+> **Note:** generators run in interpreter mode. Code using `yield` automatically falls back from C compilation to the interpreter.
+
 
 ---
 
@@ -345,9 +442,26 @@ pi                  # 3.14159...
 ## File I/O
 
 ```kuda
-content = read("myfile.txt")
-write("output.txt", "Hello!")
+content = read("myfile.txt")         # read entire file as string
+write("output.txt", "Hello!")        # write file (overwrites)
+append("log.txt", "new line\n")     # append to file
+lines = readlines("myfile.txt")      # read file as list of lines
 ```
+
+Example — simple file-based log:
+
+```kuda
+write("log.txt", "start\n")
+append("log.txt", "step 1\n")
+append("log.txt", "step 2\n")
+
+lines = readlines("log.txt")
+out("Lines: " + str(len(lines)))
+each line in lines:
+    out("> " + line)
+```
+
+`append` and `readlines` work in both interpreter and C mode.
 
 ---
 
@@ -631,6 +745,32 @@ Runtime errors include the line number:
 [Kuda RuntimeError] Line 12: Division by zero
 [Kuda RuntimeError] Line 5: Index error: list index out of range
 ```
+## REPL
+
+Interactive console — type code and see results immediately:
+
+```bash
+kuda repl
+```
+
+```
+Kuda v0.2.9 REPL — type 'exit' or Ctrl+C to quit
+>>> x = 10
+>>> y = 20
+>>> out(str(x + y))
+30
+>>> fun square(n):
+...     give n * n
+>>> out(str(square(7)))
+49
+>>> exit
+```
+
+- Variables and functions persist between lines
+- Multi-line blocks (`fun`, `if`, `each`, etc.) work normally
+- `exit` or `Ctrl+C` to quit
+- `Ctrl+C` while typing a block cancels the buffer without exiting
+
 
 ---
 

@@ -414,6 +414,18 @@ class Interpreter:
             return
 
         # Python module import: use numpy or use numpy as np
+        # Check built-in Kuda stdlib modules first
+        STDLIB = {
+            'json': _KudaJson,
+            'path': _KudaPath,
+            'env':  _KudaEnv,
+            'http': _KudaHttp,
+        }
+        if node.module in STDLIB:
+            name = node.alias if node.alias else node.module
+            env.set(name, STDLIB[node.module]())
+            return
+
         try:
             import importlib
             mod = importlib.import_module(node.module)
@@ -1228,3 +1240,200 @@ class Interpreter:
         if isinstance(val, list):
             return '[' + ', '.join(self._to_str(v) for v in val) + ']'
         return str(val)
+
+# === Kuda Standard Library Modules ===
+
+class _KudaStdlibModule:
+    """Base class for stdlib modules — provides get_attr dispatch."""
+    def get_attr(self, name):
+        method = getattr(self, f'_m_{name}', None)
+        if method is None:
+            raise AttributeError(f"'{type(self).__name__}' has no attribute '{name}'")
+        return method
+
+class _KudaJson(_KudaStdlibModule):
+    """json module — parse and dump JSON."""
+
+    def _m_parse(self, args):
+        import json as _json
+        text = args[0]
+        try:
+            data = _json.loads(text)
+            return self._convert(data)
+        except Exception as e:
+            raise RuntimeError(f"json.parse: {e}")
+
+    def _m_dump(self, args):
+        import json as _json
+        data = args[0]
+        indent = int(args[1]) if len(args) > 1 and isinstance(args[1], (int, float)) else None
+        path   = args[1] if len(args) > 1 and isinstance(args[1], str) else None
+        path   = args[2] if len(args) > 2 and isinstance(args[2], str) else path
+        obj = self._to_python(data)
+        text = _json.dumps(obj, indent=indent, ensure_ascii=False)
+        if path:
+            with open(path, 'w', encoding='utf-8') as f:
+                f.write(text)
+        return text
+
+    def _m_load(self, args):
+        """json.load(path) — read JSON file."""
+        import json as _json
+        path = args[0]
+        try:
+            with open(path, 'r', encoding='utf-8') as f:
+                data = _json.load(f)
+            return self._convert(data)
+        except FileNotFoundError:
+            raise RuntimeError(f"json.load: plik nie istnieje: '{path}'")
+
+    def _m_save(self, args):
+        """json.save(data, path) — write JSON file."""
+        import json as _json
+        data, path = args[0], args[1]
+        obj = self._to_python(data)
+        with open(path, 'w', encoding='utf-8') as f:
+            _json.dump(obj, f, indent=2, ensure_ascii=False)
+
+    def _convert(self, obj):
+        """Convert Python obj to Kuda-friendly types."""
+        if isinstance(obj, dict):
+            return {str(k): self._convert(v) for k, v in obj.items()}
+        if isinstance(obj, list):
+            return [self._convert(v) for v in obj]
+        if isinstance(obj, bool):
+            return obj
+        if isinstance(obj, (int, float)):
+            return float(obj)
+        if obj is None:
+            return None
+        return str(obj)
+
+    def _to_python(self, obj):
+        """Convert Kuda obj back to Python."""
+        if isinstance(obj, dict):
+            return {k: self._to_python(v) for k, v in obj.items()}
+        if isinstance(obj, list):
+            return [self._to_python(v) for v in obj]
+        if isinstance(obj, float) and obj == int(obj):
+            return int(obj)
+        return obj
+
+    def __repr__(self): return '<kuda module: json>'
+
+
+class _KudaPath(_KudaStdlibModule):
+    """path module — file system path operations."""
+
+    def _m_join(self, args):
+        import os
+        return os.path.join(*[str(a) for a in args])
+
+    def _m_exists(self, args):
+        import os
+        return os.path.exists(str(args[0]))
+
+    def _m_isfile(self, args):
+        import os
+        return os.path.isfile(str(args[0]))
+
+    def _m_isdir(self, args):
+        import os
+        return os.path.isdir(str(args[0]))
+
+    def _m_basename(self, args):
+        import os
+        return os.path.basename(str(args[0]))
+
+    def _m_dirname(self, args):
+        import os
+        return os.path.dirname(str(args[0]))
+
+    def _m_ext(self, args):
+        import os
+        return os.path.splitext(str(args[0]))[1]
+
+    def _m_stem(self, args):
+        import os
+        return os.path.splitext(os.path.basename(str(args[0])))[0]
+
+    def _m_abs(self, args):
+        import os
+        return os.path.abspath(str(args[0]))
+
+    def _m_list(self, args):
+        import os
+        return os.listdir(str(args[0]) if args else '.')
+
+    def _m_mkdir(self, args):
+        import os
+        os.makedirs(str(args[0]), exist_ok=True)
+
+    def _m_remove(self, args):
+        import os
+        os.remove(str(args[0]))
+
+    def _m_rename(self, args):
+        import os
+        os.rename(str(args[0]), str(args[1]))
+
+    def _m_cwd(self, args):
+        import os
+        return os.getcwd()
+
+    def __repr__(self): return '<kuda module: path>'
+
+
+class _KudaEnv(_KudaStdlibModule):
+    """env module — environment variables."""
+
+    def _m_get(self, args):
+        import os
+        key = str(args[0])
+        default = str(args[1]) if len(args) > 1 else ''
+        return os.environ.get(key, default)
+
+    def _m_set(self, args):
+        import os
+        os.environ[str(args[0])] = str(args[1])
+
+    def _m_all(self, args):
+        import os
+        return {k: v for k, v in os.environ.items()}
+
+    def __repr__(self): return '<kuda module: env>'
+
+
+class _KudaHttp(_KudaStdlibModule):
+    """http module — simple HTTP requests."""
+
+    def _m_get(self, args):
+        try:
+            import urllib.request as _req
+            url = str(args[0])
+            with _req.urlopen(url) as r:
+                return r.read().decode('utf-8')
+        except Exception as e:
+            raise RuntimeError(f"http.get: {e}")
+
+    def _m_post(self, args):
+        try:
+            import urllib.request as _req
+            import urllib.parse as _parse
+            url  = str(args[0])
+            data = str(args[1]) if len(args) > 1 else ''
+            encoded = data.encode('utf-8')
+            req = _req.Request(url, data=encoded, method='POST')
+            with _req.urlopen(req) as r:
+                return r.read().decode('utf-8')
+        except Exception as e:
+            raise RuntimeError(f"http.post: {e}")
+
+    def _m_json(self, args):
+        """http.json(url) — GET and parse JSON response."""
+        import json as _json
+        text = self._m_get(args)
+        data = _json.loads(text)
+        return _KudaJson()._convert(data)
+
+    def __repr__(self): return '<kuda module: http>'

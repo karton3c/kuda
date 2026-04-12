@@ -11,10 +11,10 @@ from lexer import Lexer, LexerError
 from parser import Parser, ParseError
 from interpreter import Interpreter, RuntimeError_
 
-VERSION = "0.2.9"
+VERSION = "0.2.10"
 
 HELP = """
-Kuda v0.2.9 - Fast ML language that compiles to C
+Kuda v0.2.10 - Fast ML language that compiles to C
 
 Usage:
   kuda <file.kuda>            Run file (compiles to C, super fast!)
@@ -110,26 +110,33 @@ def run_fast(path):
         from codegen import CGenerator
         _cg = CGenerator()
         # Fallback do interpretera tylko jeśli używa DataBuilder bez net
-        from parser import NetNode, YieldNode
+        from parser import NetNode, YieldNode, TryNode
         _has_net = any(isinstance(s, NetNode) for s in _ast.statements)
         if _cg._uses_data_builder(_ast) and not _has_net:
             run_interpreted(path)
             return
-        # Fallback do interpretera jeśli kod używa yield (C nie obsługuje coroutines)
-        def _ast_has_yield(stmts):
+        # Fallback do interpretera jeśli kod używa yield lub try/fail
+        def _ast_has_node(stmts, node_type):
             for s in stmts:
-                if isinstance(s, YieldNode):
+                if isinstance(s, node_type):
                     return True
-                for attr in ('body', 'else_body', 'statements'):
+                for attr in ('body', 'else_body', 'statements', 'try_body', 'fail_body'):
                     sub = getattr(s, attr, None)
-                    if isinstance(sub, list) and _ast_has_yield(sub):
+                    if isinstance(sub, list) and _ast_has_node(sub, node_type):
                         return True
                 if hasattr(s, 'cases'):
                     for _, body in s.cases:
-                        if _ast_has_yield(body):
+                        if _ast_has_node(body, node_type):
+                            return True
+                if hasattr(s, 'fail_clauses'):
+                    for _, _, body in s.fail_clauses:
+                        if _ast_has_node(body, node_type):
                             return True
             return False
-        if _ast_has_yield(_ast.statements):
+        if _ast_has_node(_ast.statements, YieldNode):
+            run_interpreted(path)
+            return
+        if _ast_has_node(_ast.statements, TryNode):
             run_interpreted(path)
             return
     except Exception:

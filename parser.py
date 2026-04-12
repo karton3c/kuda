@@ -621,6 +621,12 @@ class Parser:
             self._end_statement()
             if isinstance(expr, IdentNode):
                 return AugAssignNode(expr.name, op, value, line)
+            elif isinstance(expr, AttrNode):
+                # self.x += dx  ->  AssignNode(AttrNode, BinOpNode(AttrNode, op, value))
+                return AssignNode(expr, BinOpNode(expr, op, value, line), line)
+            elif isinstance(expr, IndexNode):
+                # lista[i] += 1  ->  IndexAssignNode(IndexNode, BinOpNode(...))
+                return IndexAssignNode(expr, BinOpNode(expr, op, value, line), line)
             else:
                 raise ParseError("Invalid left-hand side of augmented assignment", self.current().line)
 

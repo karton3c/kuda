@@ -1,5 +1,5 @@
 # Kuda Language Reference
-**Version 0.2.9**
+**Version 0.2.10**
 
 Kuda is a programming language with Python-like syntax that compiles to C for fast execution. This document covers everything you need to write Kuda programs.
 
@@ -754,7 +754,7 @@ kuda repl
 ```
 
 ```
-Kuda v0.2.9 REPL — type 'exit' or Ctrl+C to quit
+Kuda v0.2.10 REPL — type 'exit' or Ctrl+C to quit
 >>> x = 10
 >>> y = 20
 >>> out(str(x + y))
@@ -827,4 +827,4 @@ out(str(round(mynet.predict([0.0,0.0,1.0,0.0,1.0,0.0,0.0,0.0]))))
 
 ---
 
-*Kuda v0.2.9 — open source*
+*Kuda v0.2.10 — open source*

@@ -198,6 +198,8 @@ class Interpreter:
         # Matematyka
         env.set('prw',   lambda args: math.sqrt(args[0]))
         env.set('pot',   lambda args: math.pow(args[0], args[1]))
+        env.set('log',   lambda args: math.log(args[0]))
+        env.set('exp',   lambda args: math.exp(args[0]))
         env.set('dwn',   lambda args: math.floor(args[0]))
         env.set('up',    lambda args: math.ceil(args[0]))
         env.set('pi',    math.pi)
@@ -589,6 +591,24 @@ class Interpreter:
         if verbose is False or verbose == 0:
             log_every = 0
         stop_loss = float(params.get('stop', -1.0))
+
+        # ~act = tanh evaluates to a Python lambda in interpreter env
+        # — resolve callable back to string name for storage/serialization
+        _ACT_NAMES  = {'tanh', 'sigmoid', 'relu', 'leaky', 'linear'}
+        _INIT_NAMES = {'xav', 'he'}
+        def _resolve_name(val, known, default):
+            if isinstance(val, str) and val in known: return val
+            if isinstance(val, str): return default
+            # callable — look up by identity in env
+            for n in known:
+                try:
+                    env_val = env.get(n)
+                    if env_val is val: return n
+                except Exception: pass
+            return default
+        act_name  = _resolve_name(act_name,  _ACT_NAMES,  'tanh')
+        out_name  = _resolve_name(out_name,  _ACT_NAMES,  act_name)
+        init_name = _resolve_name(init_name, _INIT_NAMES, 'xav')
 
         # Funkcje aktywacji
         def get_act(name):

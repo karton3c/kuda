@@ -1,4 +1,4 @@
-# Kuda v0.2.10 - C Code Generator with Full Builtins Support
+# Kuda v0.2.9 - C Code Generator with Full Builtins Support
 from parser import *
 import math
 
@@ -357,7 +357,7 @@ class CGenerator:
 
     def _runtime(self):
         return [
-            '/* Kuda v0.2.10 Runtime - Full Featured */',
+            '/* Kuda v0.2.9 Runtime - Full Featured */',
             '#define MAX_STR  4096',
             '#define MAX_MAT  512',
             '#define MAX_LIST 1024',
@@ -858,7 +858,7 @@ class CGenerator:
 
         return patched
 
-
+    def _gen_net_load_decl(self, node):
         """Generate C declarations for ~name = net.load("file.json").
         Reads the JSON at codegen time to know architecture,
         then emits a _load() function that reads weights at runtime."""

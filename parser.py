@@ -104,7 +104,7 @@ class NetLoadNode:
 class UseNode:
     def __init__(self, module, alias=None, filepath=None, absolute=False):
         self.module = module      # Python module name (e.g. 'numpy')
-        self.alias = alias        # optional alias
+        self.alias = alias        # optional alias (for both modules and files)
         self.filepath = filepath  # Kuda file path (e.g. 'utils.kuda')
         self.absolute = absolute  # True if @"path" (relative to CWD)
 
@@ -312,8 +312,12 @@ class Parser:
             absolute = True
         if self.current().type == TT_STRING:
             filepath = self.advance().value
+            alias = None
+            if self.current().type == 'as':
+                self.advance()  # 'as'
+                alias = self.expect_identifier()
             self._end_statement()
-            return UseNode(module=None, filepath=filepath, absolute=absolute)
+            return UseNode(module=None, filepath=filepath, absolute=absolute, alias=alias)
 
         # use numpy  or  use numpy as np
         name = self.expect(TT_IDENT).value

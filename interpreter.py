@@ -148,6 +148,25 @@ class RuntimeError_(Exception):
             super().__init__(f'[Kuda RuntimeError] {msg}')
 
 
+class _KudaNamespace:
+    """
+    Namespace object created by: use "file.kuda" as ns
+    Allows accessing exported symbols as ns.func(), ns.VAR, etc.
+    """
+    def __init__(self, name, vars_dict):
+        self._name = name
+        self._vars = vars_dict
+
+    def get_attr(self, attr):
+        if attr in self._vars:
+            return self._vars[attr]
+        raise AttributeError(f"Namespace '{self._name}' has no attribute '{attr}'")
+
+    def __repr__(self):
+        keys = list(self._vars.keys())
+        return f"<namespace {self._name}: {keys}>"
+
+
 class Interpreter:
     def __init__(self):
         self.global_env = Environment()
@@ -400,7 +419,7 @@ class Interpreter:
         self.eval(node, env)
 
     def exec_use(self, node, env):
-        # File import: use "file.kuda" or use @"path"
+        # File import: use "file.kuda" or use @"path" or use "file.kuda" as ns
         if node.filepath is not None:
             import os
             if node.absolute:
@@ -424,9 +443,18 @@ class Interpreter:
                 raise RuntimeError_(f"use: blad parsowania '{path}': {e}", self.current_line)
             old_file = getattr(self, '_current_file', None)
             self._current_file = path
-            for stmt in ast.statements:
-                self.exec(stmt, env)
-            self._current_file = old_file
+            if node.alias:
+                # Namespace mode: use "math.kuda" as math
+                ns_env = Environment(parent=self.global_env)
+                for stmt in ast.statements:
+                    self.exec(stmt, ns_env)
+                self._current_file = old_file
+                env.set(node.alias, _KudaNamespace(node.alias, ns_env.vars))
+            else:
+                # Normal mode: dump everything into current env
+                for stmt in ast.statements:
+                    self.exec(stmt, env)
+                self._current_file = old_file
             return
 
         # Python module import: use numpy or use numpy as np
@@ -448,7 +476,7 @@ class Interpreter:
             name = node.alias if node.alias else node.module
             env.set(name, mod)
         except ImportError:
-            raise RuntimeError_(f"Nie mozna zaimportowac: '{node.module}'", self.current_line)
+            raise RuntimeError_(f"Nie mozna zaimportowac: '{node.module}'")
 
     def exec_assign(self, node, env):
         value = self.eval(node.value, env)
@@ -553,7 +581,7 @@ class Interpreter:
             raw_data = list(zip(params['inputs'], params['targets']))
 
         if raw_data is None:
-            raise RuntimeError_("net: brak danych (~data lub ~inputs + ~targets)", self.current_line)
+            raise RuntimeError_("net: brak danych (~data lub ~inputs + ~targets)")
 
         # Normalizuj format danych -> lista (inputs, target)
         dataset = []
@@ -737,7 +765,7 @@ class Interpreter:
             with open(path) as _f:
                 data = _json.load(_f)
         except FileNotFoundError:
-            raise RuntimeError_(f"net.load: nie mozna otworzyc '{path}'", self.current_line)
+            raise RuntimeError_(f"net.load: nie mozna otworzyc '{path}'")
 
         layers   = data['layers']
         W_flat   = data['W']
@@ -1030,6 +1058,14 @@ class Interpreter:
             if isinstance(obj, list) and method_name in self.LIST_METHODS:
                 return self.LIST_METHODS[method_name](obj, args)
 
+            if isinstance(obj, _KudaNamespace):
+                func = obj.get_attr(method_name)
+                if isinstance(func, KudaFunction):
+                    return self._call_function(func, args)
+                if callable(func):
+                    return func(*args)
+                return func
+
             if isinstance(obj, KudaInstance):
                 method = obj.get_attr(method_name)
                 if isinstance(method, BoundMethod):
@@ -1142,7 +1178,7 @@ class Interpreter:
             if hasattr(obj, method_name):
                 return getattr(obj, method_name)(*args)
 
-            raise RuntimeError_(f"No method '{method_name}' on {type(obj).__name__}", self.current_line)
+            raise RuntimeError_(f"No method '{method_name}' on {type(obj).__name__}")
 
         func = self.eval(node.func, env)
 
@@ -1255,7 +1291,7 @@ class Interpreter:
         if callable(func):
             return func(*args)
 
-        raise RuntimeError_(f"'{func}' is not callable", self.current_line)
+        raise RuntimeError_(f"'{func}' is not callable")
 
     def _has_yield(self, stmts):
         """Rekurencyjnie sprawdza czy lista instrukcji zawiera yield."""

@@ -3,9 +3,8 @@ from parser import *
 import math
 
 class CompileError(Exception):
-    def __init__(self, msg, line=None):
-        prefix = f'[Kuda CompileError] Line {line}: ' if line else '[Kuda CompileError] '
-        super().__init__(f'{prefix}{msg}')
+    def __init__(self, msg):
+        super().__init__(f'[Kuda CompileError] {msg}')
 
 
 class CGenerator:
@@ -37,6 +36,7 @@ class CGenerator:
         self.extern_decls = []  # extern C function declarations
         self.extern_funcs = {}  # name -> ret_type for extern functions
         self.extra_c_files = []  # .c files to compile alongside main
+        self.namespaces = {}   # alias -> set of function/var names from that file
 
     def fresh_tmp(self):
         self.tmp_count += 1
@@ -63,6 +63,20 @@ class CGenerator:
             if _check(stmt): return True
         return False
 
+    def _prefix_ast(self, stmts, prefix):
+        """Rename all FunNode names and top-level AssignNode names with prefix__."""
+        renamed = set()
+        new_stmts = []
+        for stmt in stmts:
+            if isinstance(stmt, FunNode):
+                renamed.add(stmt.name)
+                stmt.name = f'{prefix}__{stmt.name}'
+            elif isinstance(stmt, AssignNode) and isinstance(stmt.name, str):
+                renamed.add(stmt.name)
+                stmt.name = f'{prefix}__{stmt.name}'
+            new_stmts.append(stmt)
+        return new_stmts, renamed
+
     def _expand_uses(self, ast, source_file=None):
         """Recursively expand use "file.kuda" by inlining the file's AST."""
         import os
@@ -86,7 +100,13 @@ class CGenerator:
                 sub_ast = _Par(_Lex(src).tokenize()).parse()
                 # Recursively expand nested uses relative to this file
                 sub_ast = self._expand_uses(sub_ast, path)
-                expanded.extend(sub_ast.statements)
+                if stmt.alias:
+                    # Namespace mode: prefix all names with alias__
+                    prefixed, renamed = self._prefix_ast(sub_ast.statements, stmt.alias)
+                    self.namespaces[stmt.alias] = renamed
+                    expanded.extend(prefixed)
+                else:
+                    expanded.extend(sub_ast.statements)
             else:
                 expanded.append(stmt)
         ast.statements = expanded
@@ -872,7 +892,7 @@ class CGenerator:
             with open(path) as _f:
                 data = _json.load(_f)
         except FileNotFoundError:
-            raise CompileError(f"net.load: plik '{path}' nie istnieje (potrzebny przy kompilacji)", getattr(node, 'line', None))
+            raise Exception(f"net.load: plik '{path}' nie istnieje (potrzebny przy kompilacji)")
 
         layers   = data['layers']
         act_name = data.get('act', 'tanh')
@@ -1743,6 +1763,11 @@ class CGenerator:
     def _gen_attr_access(self, node):
         obj_val, obj_typ = self._gen_expr(node.obj)
         attr = node.attr
+        # Namespace variable access: math.PI -> math__PI
+        if obj_val in self.namespaces:
+            c_name = f'{obj_val}__{attr}'
+            vtype = self.vars.get(c_name, 'double')
+            return c_name, vtype
         if obj_typ == 'matrix':
             if attr == 'rows': return f'((double){obj_val}->rows)', 'double'
             if attr == 'cols': return f'((double){obj_val}->cols)', 'double'
@@ -1986,6 +2011,19 @@ class CGenerator:
         obj_val, obj_typ = self._gen_expr(attr_node.obj)
         method = attr_node.attr
         args_eval = [self._gen_expr(a) for a in arg_nodes]
+
+        # Namespace call: math.square(x) -> math__square(x)
+        if obj_val in self.namespaces:
+            c_name = f'{obj_val}__{method}'
+            arg_parts = []
+            for v, t in args_eval:
+                if t in self.models or t == 'str':
+                    arg_parts.append(v)
+                else:
+                    arg_parts.append(f'(double)({v})')
+            args_str = ', '.join(arg_parts)
+            ret_type = self.func_return_types.get(c_name, 'double')
+            return f'{c_name}({args_str})', ret_type
 
         # Net predict call: xor.predict([1.0, 0.0]) -> xor_predict(tmp_arr)
         if obj_typ == 'net' and method == 'predict':

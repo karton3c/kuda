@@ -413,7 +413,7 @@ class Interpreter:
                     path = node.filepath
             path = os.path.normpath(path)
             if not os.path.exists(path):
-                raise RuntimeError_(f"use: plik nie istnieje: '{path}'")
+                raise RuntimeError_(f"use: plik nie istnieje: '{path}'", self.current_line)
             from lexer import Lexer as _Lexer
             from parser import Parser as _Parser
             with open(path, 'r', encoding='utf-8') as f:
@@ -421,7 +421,7 @@ class Interpreter:
             try:
                 ast = _Parser(_Lexer(source).tokenize()).parse()
             except Exception as e:
-                raise RuntimeError_(f"use: blad parsowania '{path}': {e}")
+                raise RuntimeError_(f"use: blad parsowania '{path}': {e}", self.current_line)
             old_file = getattr(self, '_current_file', None)
             self._current_file = path
             for stmt in ast.statements:
@@ -448,7 +448,7 @@ class Interpreter:
             name = node.alias if node.alias else node.module
             env.set(name, mod)
         except ImportError:
-            raise RuntimeError_(f"Nie mozna zaimportowac: '{node.module}'")
+            raise RuntimeError_(f"Nie mozna zaimportowac: '{node.module}'", self.current_line)
 
     def exec_assign(self, node, env):
         value = self.eval(node.value, env)
@@ -553,7 +553,7 @@ class Interpreter:
             raw_data = list(zip(params['inputs'], params['targets']))
 
         if raw_data is None:
-            raise RuntimeError_("net: brak danych (~data lub ~inputs + ~targets)")
+            raise RuntimeError_("net: brak danych (~data lub ~inputs + ~targets)", self.current_line)
 
         # Normalizuj format danych -> lista (inputs, target)
         dataset = []
@@ -737,7 +737,7 @@ class Interpreter:
             with open(path) as _f:
                 data = _json.load(_f)
         except FileNotFoundError:
-            raise RuntimeError_(f"net.load: nie mozna otworzyc '{path}'")
+            raise RuntimeError_(f"net.load: nie mozna otworzyc '{path}'", self.current_line)
 
         layers   = data['layers']
         W_flat   = data['W']
@@ -1142,7 +1142,7 @@ class Interpreter:
             if hasattr(obj, method_name):
                 return getattr(obj, method_name)(*args)
 
-            raise RuntimeError_(f"No method '{method_name}' on {type(obj).__name__}")
+            raise RuntimeError_(f"No method '{method_name}' on {type(obj).__name__}", self.current_line)
 
         func = self.eval(node.func, env)
 
@@ -1255,7 +1255,7 @@ class Interpreter:
         if callable(func):
             return func(*args)
 
-        raise RuntimeError_(f"'{func}' is not callable")
+        raise RuntimeError_(f"'{func}' is not callable", self.current_line)
 
     def _has_yield(self, stmts):
         """Rekurencyjnie sprawdza czy lista instrukcji zawiera yield."""

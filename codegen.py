@@ -3,8 +3,9 @@ from parser import *
 import math
 
 class CompileError(Exception):
-    def __init__(self, msg):
-        super().__init__(f'[Kuda CompileError] {msg}')
+    def __init__(self, msg, line=None):
+        prefix = f'[Kuda CompileError] Line {line}: ' if line else '[Kuda CompileError] '
+        super().__init__(f'{prefix}{msg}')
 
 
 class CGenerator:
@@ -79,7 +80,7 @@ class CGenerator:
                     path = os.path.join(base, stmt.filepath)
                 path = os.path.normpath(path)
                 if not os.path.exists(path):
-                    raise CompileError(f"use: plik nie istnieje: '{path}'")
+                    raise CompileError(f"use: plik nie istnieje: '{path}'", getattr(stmt, 'line', None))
                 with open(path, 'r', encoding='utf-8') as f:
                     src = f.read()
                 sub_ast = _Par(_Lex(src).tokenize()).parse()
@@ -871,7 +872,7 @@ class CGenerator:
             with open(path) as _f:
                 data = _json.load(_f)
         except FileNotFoundError:
-            raise Exception(f"net.load: plik '{path}' nie istnieje (potrzebny przy kompilacji)")
+            raise CompileError(f"net.load: plik '{path}' nie istnieje (potrzebny przy kompilacji)", getattr(node, 'line', None))
 
         layers   = data['layers']
         act_name = data.get('act', 'tanh')
